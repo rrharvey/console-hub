@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Info bar</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --fg: #1c2230; --muted: #6a7385; --line: #dfe2e8;
+    --hover: #e8ebf0; --accent: #3558c8; --warn: #b36b00; --bad: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #181b22; --fg: #e6e9ef; --muted: #8b93a5; --line: #2a2f3a;
+      --hover: #232834; --accent: #7d9bf2; --warn: #e0a040; --bad: #e57368;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    border-bottom: 1px solid var(--line);
+    user-select: none; -webkit-user-select: none; overflow: hidden; white-space: nowrap;
+  }
+  #items { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  #items::-webkit-scrollbar { display: none; }
+  .item { display: flex; gap: 6px; align-items: baseline; padding: 6px 8px; border-radius: 6px; }
+  .item:hover { background: var(--hover); }
+  .name { color: var(--muted); }
+  .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .loading .value { color: var(--muted); font-weight: 400; }
+  .stale .value { opacity: .55; }
+  .login .value { color: var(--warn); font-weight: 400; }
+  .notfound .value, .error .value { color: var(--bad); font-weight: 400; }
+  .unsupported .value { color: var(--muted); font-weight: 400; }
+  button {
+    all: unset; cursor: pointer; padding: 4px 8px; border-radius: 6px; color: var(--muted);
+  }
+  button:hover { background: var(--hover); color: var(--fg); }
+  button:focus-visible { outline: 2px solid var(--accent); }
+  #updated { color: var(--muted); font-size: 11px; }
+  @media (max-width: 900px) { #updated { display: none; } }
+</style>
+</head>
+<body>
+  <div id="items"></div>
+  <span id="updated"></span>
+  <button id="refresh" title="Refresh balances">↻</button>
+  <script src="vendors.js"></script>
+  <script>
+    const { invoke } = window.__TAURI__.core;
+    const REFRESH_MS = 15 * 60 * 1000;
+    const shown = window.VENDORS.filter(v => (v.balanceUrl || v.balanceNote) && !v.external);
+    const vendors = shown.filter(v => v.balanceUrl);
+    const items = document.getElementById("items");
+    const updated = document.getElementById("updated");
+    const els = {};
+    let lastRefresh = null;
+
+    for (const v of shown) {
+      const el = document.createElement("div");
+      el.className = v.balanceUrl ? "item loading" : "item unsupported";
+      el.innerHTML = `<span class="name"></span><span class="value"></span>`;
+      el.querySelector(".name").textContent = v.name;
+      el.querySelector(".value").textContent = v.balanceUrl ? "…" : "—";
+      if (v.balanceNote) el.title = v.balanceNote;
+      items.appendChild(el);
+      els[v.id] = el;
+    }
+
+    const LABELS = { loading: "…", login: "sign in", notfound: "not found", error: "error", unsupported: "—" };
+    const ago = s => {
+      const m = Math.round((Date.now() / 1000 - s) / 60);
+      return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+    };
+
+    // Called from Rust (publish in main.rs) with one vendor's reading.
+    window.onBalance = b => {
+      const el = els[b.id];
+      if (!el) return;
+      // A failed refresh keeps showing the last good value, dimmed. "sign in" always
+      // shows, since that needs action; the last value moves to the tooltip.
+      const stale = b.status !== "ok" && b.status !== "login" && b.value;
+      el.className = `item ${stale ? "stale" : b.status}`;
+      el.querySelector(".value").textContent =
+        b.status === "ok" || stale ? b.value : (LABELS[b.status] || b.status);
+      const tip = [];
+      if (b.status !== "ok") tip.push(`Status: ${LABELS[b.status] || b.status}`);
+      if (b.status === "login" && b.value) tip.push(`Last balance: ${b.value}`);
+      if (b.detail) tip.push(b.detail);
+      if (b.updated) tip.push(`Read ${ago(b.updated)}`);
+      if (b.url) tip.push(b.url);
+      el.title = tip.join("\n");
+    };
+
+    function showUpdated() {
+      updated.textContent = lastRefresh ? `updated ${ago(lastRefresh)}` : "";
+    }
+
+    async function refresh() {
+      lastRefresh = Date.now() / 1000;
+      showUpdated();
+      try {
+        await invoke("refresh_balances", { targets: vendors.map(v => ({ id: v.id, url: v.balanceUrl })) });
+      } catch (e) {
+        updated.textContent = String(e);
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", refresh);
+
+    (async () => {
+      // Show what Rust already has (e.g. after the bar reloads), then refresh.
+      try { (await invoke("get_balances")).forEach(window.onBalance); } catch {}
+      // Let the visible console start loading first.
+      setTimeout(refresh, 1500);
+      setInterval(refresh, REFRESH_MS);
+      setInterval(showUpdated, 30 * 1000);
+    })();
+  </script>
+</body>
+</html>

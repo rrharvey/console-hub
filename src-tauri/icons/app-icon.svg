@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Source for every app icon size. Regenerate with: npx tauri icon src-tauri/icons/app-icon.svg -->
+  <!-- macOS icon grid: 824x824 body centered on a 1024 canvas, so it matches other apps in Cmd-Tab. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b7cf5"/>
+      <stop offset="1" stop-color="#2a3d9c"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <filter id="winShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0b1440" flood-opacity="0.35"/>
+    </filter>
+    <clipPath id="win">
+      <rect x="212" y="262" width="600" height="500" rx="44"/>
+    </clipPath>
+  </defs>
+
+  <!-- body -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="4"/>
+
+  <!-- console window -->
+  <g filter="url(#winShadow)">
+    <rect x="212" y="262" width="600" height="500" rx="44" fill="#ffffff"/>
+  </g>
+  <g clip-path="url(#win)">
+    <!-- sidebar -->
+    <rect x="212" y="262" width="168" height="500" fill="#dde5fa"/>
+    <rect x="242" y="312" width="108" height="28" rx="14" fill="#3558c8"/>
+    <rect x="242" y="368" width="108" height="28" rx="14" fill="#3558c8" fill-opacity="0.35"/>
+    <rect x="242" y="424" width="108" height="28" rx="14" fill="#3558c8" fill-opacity="0.35"/>
+    <rect x="242" y="480" width="108" height="28" rx="14" fill="#3558c8" fill-opacity="0.35"/>
+    <!-- info bar with balance chips -->
+    <rect x="380" y="262" width="432" height="84" fill="#eef2fc"/>
+    <rect x="408" y="292" width="92" height="26" rx="13" fill="#2fb37a"/>
+    <rect x="516" y="292" width="92" height="26" rx="13" fill="#3558c8" fill-opacity="0.55"/>
+    <rect x="624" y="292" width="92" height="26" rx="13" fill="#3558c8" fill-opacity="0.55"/>
+    <!-- chart -->
+    <rect x="428" y="560" width="54" height="150" rx="12" fill="#3558c8" fill-opacity="0.45"/>
+    <rect x="510" y="490" width="54" height="220" rx="12" fill="#3558c8" fill-opacity="0.7"/>
+    <rect x="592" y="420" width="54" height="290" rx="12" fill="#3558c8"/>
+    <rect x="674" y="520" width="54" height="190" rx="12" fill="#3558c8" fill-opacity="0.6"/>
+  </g>
+</svg>
