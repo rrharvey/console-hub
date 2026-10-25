@@ -95,14 +95,7 @@
     if (el) el.click();
     return !!el;
   };
-  let lastPrepare = 0;
-  const PREPARE = {
-    // TypeSafe's balance lives in a dialog opened by "Billing" in the left nav.
-    typesafe: () => {
-      if (document.querySelector("[role=dialog]") || Date.now() - lastPrepare < 4000) return;
-      if (clickByText("Billing")) lastPrepare = Date.now();
-    },
-  };
+  const PREPARE = {};
 
   // ---- per-vendor extractors ----------------------------------------------------
   // Each returns {value, detail?} when found, or null to keep waiting.
@@ -148,28 +141,37 @@
     },
 
     // GET app.tavily.com/api/account -> { usage, limit, addon_limit, plan_display_name, paygo* }
-    // Tavily sells plan credits, not a dollar balance, so show credits remaining this cycle.
-    tavily: ({ findCapture }) => {
+    // Tavily sells credits, not a dollar balance, so show credits remaining this cycle.
+    // With pay as you go on, the console adds paygo_usage/paygo_limit (credits) to the plan's.
+    tavily: ({ findCapture, money }) => {
       const a = findCapture(/\/api\/account(\?|$)/);
       if (!a || a.limit == null) return null;
-      const limit = Number(a.limit) + Number(a.addon_limit || 0);
-      const left = Math.max(0, limit - Number(a.usage || 0));
       const fmt = (n) => n.toLocaleString("en-US");
-      const detail = [`${fmt(Number(a.usage || 0))} / ${fmt(limit)} credits used`, `Plan: ${a.plan_display_name || a.current_plan}`];
+      const planLimit = Number(a.limit) + Number(a.addon_limit || 0);
+      const planUsed = Number(a.usage || 0);
+      const paygo = a.paygo ? { used: Number(a.paygo_usage || 0), limit: Number(a.paygo_limit || 0) } : null;
+      const used = planUsed + (paygo ? paygo.used : 0);
+      const limit = planLimit + (paygo ? paygo.limit : 0);
+      const detail = [`${fmt(used)} / ${fmt(limit)} credits used`];
+      detail.push(`Plan (${a.plan_display_name || a.current_plan}): ${fmt(planUsed)} / ${fmt(planLimit)}`);
+      if (paygo) {
+        let line = `Pay as you go: ${fmt(paygo.used)} / ${fmt(paygo.limit)}`;
+        if (a.paygo_cpc != null) line += ` (${money(paygo.used * Number(a.paygo_cpc))} at $${Number(a.paygo_cpc)}/credit)`;
+        detail.push(line);
+      }
       if (a.reset_cycle) detail.push(`Resets ${a.reset_cycle}`);
-      return { value: `${fmt(left)} credits`, detail: detail.join("\n") };
+      return { value: `${fmt(Math.max(0, limit - used))} credits`, detail: detail.join("\n") };
     },
 
-    // Opening the Billing dialog (see PREPARE) makes a Next.js server call to
-    // /settings/billing whose response has a row { ok, data: { billing: { balance, ... } } }.
-    typesafe: ({ findCapture, money }) => {
-      const rows = findCapture(/console\.typesafe\.ai\/settings\/billing/);
-      const b = Array.isArray(rows) ? rows.find((r) => r?.data?.billing)?.data.billing : null;
-      if (!b || b.balance == null) return null;
-      const detail = [`Purchased: ${money(b.purchased ?? 0)}`, `Free credits: ${money(b.freeCreditsRemaining ?? 0)}`];
-      if (b.spent != null) detail.push(`Spent ${money(b.spent)} in ${b.cycleLabel || "this cycle"}`);
-      if (b.resetsInDays != null) detail.push(`Cycle resets in ${b.resetsInDays} days`);
-      return { value: money(b.balance), detail: detail.join("\n") };
+    // The sidebar shows the balance. Loading /keys makes a Next.js server call
+    // whose response has a row { ok, data: { balanceCents } }.
+    typesafe: ({ captures, money }) => {
+      for (let i = captures.length - 1; i >= 0; i--) {
+        const rows = captures[i].json;
+        const cents = Array.isArray(rows) ? rows.find((r) => r?.data?.balanceCents != null)?.data.balanceCents : null;
+        if (cents != null) return { value: money(cents / 100) };
+      }
+      return null;
     },
   };
 

@@ -27,8 +27,7 @@ every 15 minutes, and when you click ↻. Hover a value for details.
 - "sign in" means the page redirected to a login. Open that console and log in again.
 - "not found" means the page loaded but no extractor matched. The vendor probably changed
   its API. Find the new endpoint with the dump below and update the extractor.
-- TypeSafe's balance only loads when its Billing dialog opens, so the background page
-  clicks "Billing" first (`PREPARE` in `ui/scrape.js`).
+- A balance that only loads after a click can open it from `PREPARE` in `ui/scrape.js`.
 
 To see what a billing page loads, run the binary with a dump directory:
 

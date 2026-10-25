@@ -5,7 +5,6 @@
 // `balanceUrl` is the page the info bar loads in the background to read the credit balance.
 // The matching extractor lives in `ui/scrape.js` (EXTRACTORS, keyed by `id`).
 // `balanceNote` instead shows a dash in the bar with this text as its tooltip.
-// TypeSafe's balance is in the Billing dialog; `PREPARE` in scrape.js clicks it open.
 window.VENDORS = [
   { id: "anthropic", name: "Anthropic",   url: "https://platform.claude.com/",
     balanceUrl: "https://platform.claude.com/settings/billing" },
