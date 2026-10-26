@@ -1,9 +1,18 @@
 # Console Hub
 
-One window with a sidebar of AI vendor consoles, each showing your credit balance next to
-its name. Each console is a real child webview (Tauri multiwebview, `unstable` feature),
-so logins work like normal and framing restrictions don't apply. No keys are stored.
-Runs on macOS, Windows and Linux.
+If you build with several AI APIs, you probably pay for them with prepaid credits, each in
+its own vendor console: Anthropic, OpenAI, DeepSeek, Tavily and so on. Knowing how much you
+have left means signing in to each console in turn, and it's easy to notice a balance ran
+out only when requests start failing.
+
+Console Hub puts those consoles in one window. A sidebar lists them with each one's credit
+balance, refreshed in the background every 15 minutes, so you can see at a glance what's
+running low. Click a vendor to use its console as usual, already signed in, to top up or
+check usage.
+
+It reads balances from the consoles you're signed in to, so it needs no API keys and stores
+none. Each console is a small plugin (a "provider"); `samples/` has seven, and adding
+another takes a manifest and a short script. Runs on macOS, Windows and Linux.
 
 - **[Quickstart](#quickstart)**: build and run it from source in five commands.
 - **[INSTALL.md](INSTALL.md)**: install a release or build from source, on each OS.
@@ -120,6 +129,8 @@ Quit the installed app first.
 
 ## Notes
 
+- Each console is a real child webview (Tauri multiwebview, the `unstable` feature), so
+  logins work as they do in a browser and framing restrictions don't apply.
 - Layout lives in `src-tauri/src/main.rs` (`layout`, `show_vendor`). The sidebar is `ui/index.html`.
 - All vendor webviews share the default web data store. Separate stores per vendor are not set up yet.
 - The app icon is drawn in `src-tauri/icons/app-icon.svg`. After editing it, regenerate every
