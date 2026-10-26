@@ -5,7 +5,8 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "postbuild": "rm -rf '/Applications/Console Hub.app' && ditto 'src-tauri/target/release/bundle/macos/Console Hub.app' '/Applications/Console Hub.app' && echo 'Installed /Applications/Console Hub.app'"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

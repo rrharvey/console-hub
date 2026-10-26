@@ -11,6 +11,9 @@ Needs Rust (https://rustup.rs) and Node.
     npm install
     npm run dev
 
+`npm run build` makes the release app and copies it to `/Applications/Console Hub.app`
+(the `postbuild` script). Reopen the app if it was running.
+
 ## Edit vendors
 
 `ui/vendors.js`. Verify each URL; consoles move pages around.
