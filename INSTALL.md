@@ -1,7 +1,13 @@
 # Installing Console Hub
 
-Console Hub runs on macOS, Windows and Linux. Most people should install a release.
-Build from source if you write providers or change the app.
+Console Hub runs on macOS, Windows and Linux.
+
+> **No release has been published yet.** Until there is one, everyone builds from source:
+> see [Build from source](#build-from-source), then [First run](#first-run). The release
+> instructions below apply once installers appear on the repo's Releases page.
+
+Once releases exist, most people should install one. Build from source if you write
+providers or change the app.
 
 - [Install a release](#install-a-release): [macOS](#macos) · [Windows](#windows) · [Linux](#linux)
 - [First run](#first-run)
