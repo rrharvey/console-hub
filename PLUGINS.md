@@ -109,8 +109,9 @@ provider and adjust its paths, or put your provider in `samples/` and run `npm r
 
 ## Workflow
 
-Run these from the repo. They use the dev build's console logins, so sign in to the
-console in `npm run dev` first, then quit it. Two copies shouldn't share a login store.
+Run these from the repo, on any OS. They use the dev build's console logins: sign in to
+the console in `npm run dev` first (on Windows and Linux, signing in in the installed app
+works too), then quit the app, since two copies shouldn't use the same logins at once.
 
 1. **Find the endpoint.** Capture what the billing page fetches:
 

@@ -1,18 +1,27 @@
-# Console Hub (POC)
+# Console Hub
 
-One window with a sidebar of AI vendor consoles. Each console is a real child webview
-(Tauri multiwebview, `unstable` feature), so logins work like normal and framing
-restrictions don't apply. No keys are stored.
+One window with a sidebar of AI vendor consoles, each showing your credit balance next to
+its name. Each console is a real child webview (Tauri multiwebview, `unstable` feature),
+so logins work like normal and framing restrictions don't apply. No keys are stored.
+Runs on macOS, Windows and Linux.
 
-## Run (macOS)
+- **[INSTALL.md](INSTALL.md)**: install a release or build from source, on each OS.
+- **[PLUGINS.md](PLUGINS.md)**: write a provider for another console.
+- **Agents**: [AGENTS.md](AGENTS.md) lists skills for setup, writing providers and
+  releasing, in `.agent/skills/`.
 
-Needs Rust (https://rustup.rs) and Node.
+## Develop
+
+Prerequisites for each OS are in [INSTALL.md](INSTALL.md#build-from-source).
 
     npm install
-    npm run dev
+    npm run dev           # run the app
+    npm test              # Rust tests, including every sample provider's fixtures
+    npm run build         # release app and installers (macOS: also installs to /Applications)
 
-`npm run build` makes the release app and copies it to `/Applications/Console Hub.app`
-(the `postbuild` script). Reopen the app if it was running.
+CI (`.github/workflows/ci.yml`) runs the tests on macOS, Windows and Linux for every push
+and pull request. Releases are built by `.github/workflows/release.yml`; see
+`.agent/skills/release`.
 
 ## Providers
 
@@ -25,16 +34,17 @@ and Voyage AI.
 Click **+** at the bottom of the sidebar and choose a provider folder (any name), or a
 folder of them such as `samples/` to add several at once. You're asked once to allow them;
 the prompt shows each one's console, the page it loads with your logins, the domains it
-reads, and who says they wrote it. Allowed providers are copied to
-`~/Library/Application Support/dev.consolehub.desktop/providers/<id>/`. You can also drop
-folders there yourself (restart to see them).
+reads, and who says they wrote it. Allowed providers are copied to your providers folder
+(right-click a provider > **Show Providers Folder**; the path for each OS is in
+[INSTALL.md](INSTALL.md#where-things-live)). You can also drop folders there yourself
+(restart to see them).
 
 - A provider runs only after you allow it, and only while its `manifest.json` and
   `extract.js` are exactly what you allowed (a SHA-256 kept in `settings.json` next to the
   folder). Change either file and it shows **review** in the sidebar until you allow it again.
 - To update one, add its folder again with **+**; it replaces your copy.
 - Right-click a provider and choose **Remove Provider…** to delete it.
-- Unlike logins, the dev build and the installed app share this folder and `settings.json`.
+- The dev build and the installed app share this folder and `settings.json`.
 
 ### Writing one
 
@@ -73,13 +83,13 @@ Each provider writes `<id>.json` (page text, requests, all JSON responses, and w
 matched `captures`) and `<id>.result.json`.
 The dumps contain account data and session tokens. Delete them when done.
 
-## Logins and Google sign-in
+## Logins and Google sign-in (macOS)
 
-Google refuses to show its password page inside embedded web views ("This browser or
-app may not be secure"). Once a Google session exists, sites that use Google sign-in
-only show the account picker, which works.
+On macOS, Google refuses to show its password page inside embedded web views ("This
+browser or app may not be secure"). Once a Google session exists, sites that use Google
+sign-in only show the account picker, which works. (Not yet tried on Windows or Linux.)
 
-The dev build and the installed app keep separate logins: the dev build under
+On macOS, the dev build and the installed app keep separate logins: the dev build under
 `console-hub`, the installed app under its bundle ID `dev.consolehub.desktop`. If the
 installed app ever needs Google's password page again, copy the dev build's logins over.
 Quit the installed app first.

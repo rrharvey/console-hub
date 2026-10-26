@@ -5,3 +5,5 @@ src-tauri/gen/
 
 # Captures (npm run capture) hold account data and session tokens.
 captures/
+# Installers downloaded from a test build (release skill).
+release-artifacts/
