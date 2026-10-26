@@ -2,11 +2,7 @@
 
 Console Hub runs on macOS, Windows and Linux.
 
-> **No release has been published yet.** Until there is one, everyone builds from source:
-> see [Build from source](#build-from-source), then [First run](#first-run). The release
-> instructions below apply once installers appear on the repo's Releases page.
-
-Once releases exist, most people should install one. Build from source if you write
+Most people should [install a release](#install-a-release). Build from source if you write
 providers or change the app.
 
 - [Install a release](#install-a-release): [macOS](#macos) · [Windows](#windows) · [Linux](#linux)
@@ -20,7 +16,8 @@ An agent can walk you through any of this: point it at `.agent/skills/setup/SKIL
 
 ## Install a release
 
-Download the installer for your OS from the repo's **Releases** page on GitHub. The builds
+Download the installer for your OS from the repo's
+[Releases page](https://github.com/rrharvey/console-hub/releases) on GitHub. The builds
 aren't code-signed, so each OS warns the first time you open the app. The steps below get
 past that.
 
