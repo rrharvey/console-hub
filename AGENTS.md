@@ -24,7 +24,8 @@ workflow, the commands and the reasons behind its rules.
 - `src-tauri/src/cli.rs`, `capture.rs`: author tools (`npm run test-provider`,
   `fixture`, `capture`).
 - `ui/index.html`: the sidebar.
-- `samples/`: seven sample providers with fixtures. `plugin-api/`: manifest schema, types.
+- `samples/`: eight sample providers, with fixtures for those that read a balance.
+  `plugin-api/`: manifest schema, types.
 - Docs: `README.md`, `INSTALL.md` (per OS), `PLUGINS.md` (provider authors).
 
 ## Commands

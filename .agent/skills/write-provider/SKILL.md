@@ -7,7 +7,7 @@ description: Create, fix or review a Console Hub provider plugin (a folder with 
 
 `PLUGINS.md` at the repo root is the reference: manifest fields, the `extract.js`
 contract, helpers, sandbox limits, the fixture format. Read it first. `samples/` has
-seven working providers; `samples/openai` and `samples/tavily` are the clearest models.
+eight sample providers; `samples/openai` and `samples/tavily` are the clearest models.
 
 ## How a provider works (enough to reason about it)
 

@@ -173,7 +173,7 @@ what fails (with your OS version):
 
 1. The app opens and shows the sidebar on the left; with no providers it says how to
    add them.
-2. **+** > choose `samples` > the dialog lists seven providers > **Allow**. They appear in
+2. **+** > choose `samples` > the dialog lists eight providers > **Allow**. They appear in
    the sidebar.
 3. Click OpenAI (or any console you use): its console fills the area right of the
    sidebar. Nothing is hidden under the window's title bar.

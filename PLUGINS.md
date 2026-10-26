@@ -10,7 +10,8 @@ my-provider/
   fixtures/         test cases (optional, but please add them)
 ```
 
-`samples/` has seven providers to copy from. OpenAI and Tavily are good starting points.
+`samples/` has eight providers to copy from. OpenAI and Tavily are good starting points;
+Cloudflare shows one with no metric, which only opens its console.
 
 ## How it works
 

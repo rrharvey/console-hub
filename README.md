@@ -11,7 +11,7 @@ running low. Click a vendor to use its console as usual, already signed in, to t
 check usage.
 
 It reads balances from the consoles you're signed in to, so it needs no API keys and stores
-none. Each console is a small plugin (a "provider"); `samples/` has seven, and adding
+none. Each console is a small plugin (a "provider"); `samples/` has eight, and adding
 another takes a manifest and a short script. Runs on macOS, Windows and Linux.
 
 - **[Quickstart](#quickstart)**: build and run it from source in five commands.
@@ -55,8 +55,8 @@ and pull request. Releases are built by `.github/workflows/release.yml`; see
 ## Providers
 
 None are built in. Each console is a provider plugin: a folder you add from the app.
-`samples/` has providers for Anthropic, DeepSeek, OpenAI, Parallel, Tavily, TypeSafe AI
-and Voyage AI.
+`samples/` has providers for Anthropic, Cloudflare (opens the dashboard; it has no balance to
+show), DeepSeek, OpenAI, Parallel, Tavily, TypeSafe AI and Voyage AI.
 
 ### Adding them
 

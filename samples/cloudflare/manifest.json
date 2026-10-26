@@ -1,0 +1,10 @@
+{
+  "$schema": "../../plugin-api/manifest.schema.json",
+  "apiVersion": 1,
+  "id": "cloudflare",
+  "name": "Cloudflare",
+  "url": "https://dash.cloudflare.com/",
+  "domains": [
+    "dash.cloudflare.com"
+  ]
+}
