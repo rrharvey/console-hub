@@ -56,10 +56,9 @@ pub fn test_provider(args: &[String]) -> i32 {
     }
 }
 
-/// What `console-hub capture` writes.
+/// What `console-hub capture` writes (the fields used here).
 #[derive(Deserialize)]
 pub struct Capture {
-    pub page: String,
     pub responses: Vec<Response>,
 }
 
@@ -118,7 +117,7 @@ fn make_fixture(capture: &Path, folder: &Path, name: &str) -> Result<Vec<String>
     let fx = Fixture {
         note: Some(format!(
             "Made from a capture of {}. Check it holds no account data, change the numbers to made-up values, and update expect.",
-            cap.page
+            metric.page
         )),
         responses: redacted.responses,
         expect: Expect::from(&result),
@@ -235,6 +234,60 @@ mod tests {
         let written = std::fs::read_to_string(provider.join("fixtures/balance.json")).unwrap();
         assert!(!written.contains("7Hq2kLm9Xp4R") && !written.contains("3f2a9c4e"), "{written}");
         assert!(written.contains("/api/balance/org_example"), "{written}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TypeSafe's response is an array of Next.js rows that extract.js searches with
+    /// Array.isArray and find, which must work the same through the tracing proxies.
+    #[test]
+    fn fixture_from_rows_keeps_only_the_balance_row() {
+        let dir = temp_dir("rows");
+        let provider = copy_sample("typesafe", &dir);
+        let rows = serde_json::json!([
+            { "a": "$@1", "q": "session-9f8e7d6c5b4a39281706", "i": false },
+            { "ok": true, "data": { "balanceCents": 1999, "userEmail": "someone@example.org" } }
+        ]);
+        let capture = serde_json::json!({
+            "page": "https://console.typesafe.ai/keys",
+            "responses": [{ "url": "https://console.typesafe.ai/keys", "body": rows }]
+        });
+        let cap_file = dir.join("capture.json");
+        std::fs::write(&cap_file, capture.to_string()).unwrap();
+        let lines = make_fixture(&cap_file, &provider, "rows").unwrap();
+        assert!(lines.iter().any(|l| l.contains("cut down")), "{lines:?}");
+        let written = std::fs::read_to_string(provider.join("fixtures/rows.json")).unwrap();
+        for leak in ["session-9f8e", "$@1", "someone@", "userEmail"] {
+            assert!(!written.contains(leak), "{leak} leaked into:\n{written}");
+        }
+        let fx: Fixture = serde_json::from_str(&written).unwrap();
+        assert_eq!(fx.expect.unwrap().value, "$19.99");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// When tracing changes the result, the fixture keeps whole responses and says so,
+    /// rather than writing a wrong expect. Here: each read through a proxy returns a new
+    /// proxy, so an object isn't identical to itself.
+    #[test]
+    fn fixture_keeps_whole_responses_when_tracing_changes_the_result() {
+        let dir = temp_dir("fallback");
+        let provider = dir.join("demo");
+        std::fs::create_dir_all(&provider).unwrap();
+        let manifest = serde_json::json!({
+            "apiVersion": 1, "id": "demo", "name": "Demo", "url": "https://app.example.com/", "domains": ["example.com"],
+            "metrics": [{ "key": "balance", "page": "https://app.example.com/billing", "captures": { "b": "/api/balance" } }]
+        });
+        std::fs::write(provider.join("manifest.json"), manifest.to_string()).unwrap();
+        std::fs::write(provider.join("extract.js"), "function balance({ b }) { return { value: b.data === b.data ? 'same' : 'different' }; }").unwrap();
+        let capture = serde_json::json!({ "page": "https://app.example.com/billing", "responses": [
+            { "url": "https://app.example.com/api/balance", "body": { "data": { "x": 1 }, "other": "kept" } }
+        ]});
+        let cap_file = dir.join("capture.json");
+        std::fs::write(&cap_file, capture.to_string()).unwrap();
+        let lines = make_fixture(&cap_file, &provider, "whole").unwrap();
+        assert!(lines.iter().any(|l| l.contains("so they're whole")), "{lines:?}");
+        let fx: Fixture = serde_json::from_str(&std::fs::read_to_string(provider.join("fixtures/whole.json")).unwrap()).unwrap();
+        assert_eq!(fx.expect.unwrap().value, "same");
+        assert_eq!(fx.responses[0].body["other"], "kept");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

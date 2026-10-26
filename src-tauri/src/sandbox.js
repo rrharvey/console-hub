@@ -78,13 +78,15 @@
   }
 
   // For the fixture tool (cli.rs): run the function on captures wrapped in proxies that
-  // record what it reads, and return each picked response cut down to those parts. If
-  // the cut-down responses don't give the same result, `same` is false and they're whole.
+  // record what it reads, and return each picked response cut down to those parts. Both
+  // the proxied and the cut-down runs must match a plain run; if not (a proxy can change
+  // what built-ins see), `same` is false and the responses are whole.
   const WHOLE = {};
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   function trace(metricJson, responsesJson) {
     const metric = JSON.parse(metricJson);
     const picked = pick(metric, JSON.parse(responsesJson));
+    const plain = JSON.stringify(call(metric, bodies(picked)));
     const reads = {};
     const wrap = (value, name, path) => {
       if (value === null || typeof value !== "object") return value;
@@ -111,7 +113,7 @@
       reads[name] = [[]];
       proxied[name] = wrap(r.body, name, []);
     }
-    const full = call(metric, proxied);
+    const traced = JSON.stringify(call(metric, proxied));
 
     const container = (v) => (Array.isArray(v) ? [] : {});
     const copyPath = (src, dst, path) => {
@@ -136,9 +138,9 @@
       for (const path of reads[name]) copyPath(r.body, body, path);
       pruned[name] = { url: r.url, body };
     }
-    const same = JSON.stringify(call(metric, bodies(pruned))) === JSON.stringify(full);
+    const same = traced === plain && JSON.stringify(call(metric, bodies(pruned))) === plain;
     const out = Object.entries(same ? pruned : picked).map(([name, r]) => ({ name, url: r.url, body: r.body }));
-    return JSON.stringify({ result: full, same, responses: out });
+    return JSON.stringify({ result: JSON.parse(plain), same, responses: out });
   }
 
   // Load-time checks that need the JS engine: patterns compile, the function exists.
