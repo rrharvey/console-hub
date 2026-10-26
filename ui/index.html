@@ -199,14 +199,29 @@
       }
     }
 
-    document.getElementById("refresh").addEventListener("click", refresh);
-    reload.addEventListener("click", async () => {
-      err.textContent = "";
+    async function reloadPage() {
       try {
         await invoke("reload_vendor", { id: activeId });
       } catch (e) {
         err.textContent = String(e);
       }
+    }
+
+    // Refreshing balances also reloads the open console, and reloading the console also
+    // re-reads its balance. The first refresh after launch is balances only, since the
+    // console was just opened.
+    function refreshAll() {
+      refresh();
+      if (activeId) reloadPage();
+    }
+    document.getElementById("refresh").addEventListener("click", () => {
+      err.textContent = "";
+      refreshAll();
+    });
+    reload.addEventListener("click", () => {
+      err.textContent = "";
+      reloadPage();
+      invoke("refresh_balances", { only: activeId }).catch(() => {});
     });
     document.getElementById("add").addEventListener("click", async () => {
       err.textContent = "";
@@ -227,7 +242,7 @@
       list.querySelector("button:not([data-review])")?.click();
       // Let the visible console start loading first.
       setTimeout(refresh, 1500);
-      setInterval(refresh, REFRESH_MS);
+      setInterval(refreshAll, REFRESH_MS);
       setInterval(showUpdated, 30 * 1000);
     })();
   </script>
