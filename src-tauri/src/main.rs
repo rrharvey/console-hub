@@ -255,10 +255,14 @@ fn notify_providers_changed(app: &AppHandle) {
     }
 }
 
-/// Drop a provider's stored reading, so a replaced or re-added provider doesn't show the
-/// old one's balance.
-fn forget_balance(app: &AppHandle, id: &str) {
+/// Forget what was shown for `id` before it was replaced, allowed or removed: its stored
+/// reading, and its console webview, which may be on the old provider's URL. The sidebar
+/// reopens the console (show_vendor creates it again).
+fn forget_provider(app: &AppHandle, id: &str) {
     app.state::<Balances>().0.lock().unwrap().remove(id);
+    if let Some(webview) = app.get_webview(&format!("{VENDOR_PREFIX}{id}")) {
+        let _ = webview.close();
+    }
 }
 
 fn tilde(path: &Path) -> String {
@@ -325,13 +329,15 @@ async fn review_provider(app: AppHandle, id: String) -> Result<bool, String> {
     }
     s.approved.insert(id.clone(), p.hash.clone());
     settings::save(&path, &s)?;
-    forget_balance(&app, &id);
+    forget_provider(&app, &id);
     reload_providers(&app);
     Ok(true)
 }
 
 fn ask_to_allow(app: &AppHandle, p: &Provider, replaces: bool, changed: bool) -> bool {
     let m = &p.manifest;
+    // The parsed form, as a second guard against odd characters (validation refuses them).
+    let shown = |url: &str| Url::parse(url).map(|u| u.to_string()).unwrap_or_else(|_| url.to_string());
     let mut lines = Vec::new();
     if changed {
         lines.push("It changed since you allowed it.".to_string());
@@ -344,11 +350,11 @@ fn ask_to_allow(app: &AppHandle, p: &Provider, replaces: bool, changed: bool) ->
         lines.push(format!("It replaces the \"{}\" provider that comes with Console Hub.", m.id));
     }
     lines.push(String::new());
-    lines.push(format!("Console: {}", m.url));
+    lines.push(format!("Console: {}", shown(&m.url)));
     match p.metric() {
         Some(metric) => {
             lines.push("To read your balance it loads this page in the background, signed in as you:".into());
-            lines.push(metric.page.clone());
+            lines.push(shown(&metric.page));
             lines.push(format!("and reads responses from {}.", m.domains.join(", ")));
         }
         None => lines.push("It only opens its console; it reads nothing in the background.".into()),
@@ -386,7 +392,7 @@ async fn add_provider(app: AppHandle) -> Result<Option<String>, String> {
         }
     }
     providers::install(&p, &user_dir)?;
-    forget_balance(&app, &id);
+    forget_provider(&app, &id);
     reload_providers(&app);
     // Ask right away, unless these exact contents were allowed before.
     let waiting = app.state::<Providers>().0.lock().unwrap().pending.iter().any(|q| q.manifest.id == id);
@@ -421,10 +427,7 @@ fn remove_provider(app: &AppHandle, id: &str) -> Result<(), String> {
     if s.approved.remove(id).is_some() {
         settings::save(&path, &s)?;
     }
-    forget_balance(app, id);
-    if let Some(webview) = app.get_webview(&format!("{VENDOR_PREFIX}{id}")) {
-        let _ = webview.close();
-    }
+    forget_provider(app, id);
     reload_providers(app);
     notify_providers_changed(app);
     Ok(())

@@ -268,11 +268,15 @@ fn validate(m: &mut Manifest, folder: Option<&str>) -> Result<(), String> {
 /// control characters (a newline could fake text of the dialog's own) and no bidi
 /// overrides (which reorder how the text reads).
 fn check_text(field: &str, s: &str, max: usize) -> Result<(), String> {
-    let bidi = |c: char| matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
-    if s.trim().is_empty() || s.chars().count() > max || s.chars().any(|c| c.is_control() || bidi(c)) {
+    if s.trim().is_empty() || s.chars().count() > max || s.chars().any(misleading) {
         return Err(format!("{field} must be one line of 1 to {max} characters"));
     }
     Ok(())
+}
+
+/// Control characters and bidi controls: they can add lines or reorder text when shown.
+fn misleading(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 /// A registrable host such as `openai.com` or `app.tavily.com`. Suffix matching makes it
@@ -290,6 +294,11 @@ fn check_domain(d: &str) -> Result<(), String> {
 }
 
 fn check_url(field: &str, url: &str, domains: &[String]) -> Result<(), String> {
+    // URLs are shown in the approval dialog. Parsing would quietly drop tabs and newlines,
+    // so check the raw string.
+    if url.chars().any(|c| c.is_whitespace() || misleading(c)) {
+        return Err(format!("{field} {url:?} must not contain spaces or control characters"));
+    }
     let parsed = Url::parse(url).map_err(|e| format!("{field} \"{url}\": {e}"))?;
     if parsed.scheme() != "https" {
         return Err(format!("{field} \"{url}\" must use https"));
@@ -694,5 +703,19 @@ mod tests {
         let mut m = manifest();
         m["author"] = "Jane Doe <jane@example.com>".into();
         assert!(provider(m, SCRIPT).is_ok());
+    }
+
+    /// URL parsing drops tabs and newlines, so a URL could pass and still show extra
+    /// lines in the dialog.
+    #[test]
+    fn rejects_urls_that_could_spoof_the_dialog() {
+        for bad in ["https://app.example.com/\n\nVerified by Console Hub", "https://app.example.com/\t", "https://app.example.com/\u{202e}x", "https://app.example.com/a b"] {
+            let mut m = manifest();
+            m["url"] = bad.into();
+            assert!(provider(m, SCRIPT).unwrap_err().contains("url"), "url {bad:?}");
+            let mut m = manifest();
+            m["metrics"][0]["page"] = bad.into();
+            assert!(provider(m, SCRIPT).unwrap_err().contains("page"), "page {bad:?}");
+        }
     }
 }

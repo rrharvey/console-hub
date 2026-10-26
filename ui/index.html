@@ -80,7 +80,7 @@
       try {
         if (provider.review) {
           if (!(await invoke("review_provider", { id: provider.id }))) return;
-          await loadProviders();
+          await window.onProvidersChanged();
           invoke("refresh_balances", { only: provider.id }).catch(() => {});
           list.querySelector(`[data-id="${provider.id}"]`)?.click();
         } else if (provider.external) {
@@ -111,7 +111,7 @@
       }
       b.title = p.review ? "Added to your providers folder but not allowed yet. Click to review."
         : p.external ? "Opens in your default browser" : "";
-      if (p.id === activeId) b.classList.add("active");
+      if (p.id === activeId && !p.review) b.classList.add("active");
       b.addEventListener("click", () => select(p, b));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -136,9 +136,11 @@
         err.textContent = String(e);
       }
     }
+    // Reopen the selected console (Rust may have closed it, see forget_provider in main.rs),
+    // or the first one if the selected provider is gone.
     window.onProvidersChanged = async () => {
       await loadProviders();
-      if (!list.querySelector(".active")) list.querySelector("button:not([data-review])")?.click();
+      (list.querySelector(".active") || list.querySelector("button:not([data-review])"))?.click();
     };
 
     // ---- credit balances ----------------------------------------------------------
@@ -186,9 +188,9 @@
       try {
         const id = await invoke("add_provider");
         if (!id) return;
-        await loadProviders();
-        const row = list.querySelector(`[data-id="${id}"]`);
-        if (row && !row.querySelector(".review")) {
+        await window.onProvidersChanged();
+        const row = list.querySelector(`[data-id="${id}"]:not([data-review])`);
+        if (row) {
           invoke("refresh_balances", { only: id }).catch(() => {});
           row.click();
         }
