@@ -29,8 +29,8 @@ jobs:
           - os: windows-latest
             args: ""
     runs-on: ${{ matrix.os }}
-    # A normal run takes under 6 minutes; this stops a hung step (apt, a download) early.
-    timeout-minutes: 30
+    # Jobs take under 5 minutes; one still going at 10 is stuck (apt, a download).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Check the tag matches package.json
@@ -54,6 +54,9 @@ jobs:
           workspaces: src-tauri
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
+        # Normally about 30 seconds. Ubuntu's Azure mirror sometimes slows to a crawl;
+        # fail early so the job can be re-run.
+        timeout-minutes: 5
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils

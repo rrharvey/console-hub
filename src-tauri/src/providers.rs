@@ -567,7 +567,7 @@ mod tests {
     fn samples_load() {
         let (providers, errors) = load_dir(&samples_dir());
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(providers.len(), 7);
+        assert_eq!(providers.len(), 8);
     }
 
     /// Each fixture lists the responses a page fetched and the result the sidebar should
@@ -577,6 +577,9 @@ mod tests {
         let (providers, _) = load_dir(&samples_dir());
         let mut checked = 0;
         for p in &providers {
+            if p.metric().is_none() {
+                continue;
+            }
             let files = fixture_files(&p.dir);
             assert!(!files.is_empty(), "{} has no fixtures", p.manifest.id);
             for file in files {
@@ -804,7 +807,7 @@ mod tests {
     fn inspects_one_provider_or_a_folder_of_them() {
         let (ps, errors) = inspect_all(&samples_dir());
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(ps.len(), 7);
+        assert_eq!(ps.len(), 8);
         let (ps, errors) = inspect_all(&samples_dir().join("tavily"));
         assert!(errors.is_empty() && ids(&ps) == ["tavily"], "{errors:?}");
 
