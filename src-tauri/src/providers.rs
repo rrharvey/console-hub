@@ -100,8 +100,10 @@ pub struct Response {
 
 #[derive(Debug, PartialEq)]
 pub enum Extracted {
-    /// Waiting for responses, or the function returned null.
-    Pending,
+    /// These required captures haven't arrived: the page never fetched a matching URL.
+    Missing(Vec<String>),
+    /// Everything required arrived, but the function returned null.
+    Empty,
     Ok { value: String, detail: Option<String> },
 }
 
@@ -340,12 +342,16 @@ pub fn extract(provider: &Provider, metric: &Metric, responses: &[Response]) -> 
     #[derive(Deserialize)]
     struct Out {
         status: String,
+        #[serde(default)]
+        missing: Vec<String>,
         value: Option<serde_json::Value>,
         detail: Option<serde_json::Value>,
     }
     let out: Out = serde_json::from_str(&out).map_err(|e| e.to_string())?;
-    if out.status != "ok" {
-        return Ok(Extracted::Pending);
+    match out.status.as_str() {
+        "ok" => {}
+        "missing" => return Ok(Extracted::Missing(out.missing)),
+        _ => return Ok(Extracted::Empty),
     }
     let value = match out.value {
         Some(serde_json::Value::String(v)) if !v.trim().is_empty() && v.chars().count() <= MAX_VALUE_CHARS => v,
@@ -452,11 +458,10 @@ mod tests {
             for file in files {
                 let fx: Fixture = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
                 let got = extract(p, p.metric().unwrap(), &fx.responses).unwrap();
-                let want = match fx.expect {
-                    None => Extracted::Pending,
-                    Some(e) => Extracted::Ok { value: e.value, detail: e.detail },
-                };
-                assert_eq!(got, want, "{}", file.display());
+                match fx.expect {
+                    None => assert!(!matches!(got, Extracted::Ok { .. }), "{}: {got:?}", file.display()),
+                    Some(e) => assert_eq!(got, Extracted::Ok { value: e.value, detail: e.detail }, "{}", file.display()),
+                }
                 checked += 1;
             }
         }
@@ -500,12 +505,12 @@ mod tests {
     fn extracts_and_waits_for_required_captures() {
         let p = provider(manifest(), SCRIPT).unwrap();
         let m = p.metric().unwrap();
-        assert_eq!(extract(&p, m, &[]).unwrap(), Extracted::Pending);
+        assert_eq!(extract(&p, m, &[]).unwrap(), Extracted::Missing(vec!["b".into()]));
         let rs = [response("https://api.example.com/api/balance", serde_json::json!({ "cents": 1234 }))];
         assert_eq!(extract(&p, m, &rs).unwrap(), Extracted::Ok { value: "$12.34".into(), detail: None });
-        // The function returning null keeps the scrape waiting.
+        // The function returning null keeps the scrape waiting, and says the response came.
         let rs = [response("https://api.example.com/api/balance", serde_json::json!({}))];
-        assert_eq!(extract(&p, m, &rs).unwrap(), Extracted::Pending);
+        assert_eq!(extract(&p, m, &rs).unwrap(), Extracted::Empty);
     }
 
     #[test]
@@ -515,7 +520,7 @@ mod tests {
             response("https://example.com.evil.net/api/balance", serde_json::json!({ "cents": 1 })),
             response("https://notexample.com/api/balance", serde_json::json!({ "cents": 2 })),
         ];
-        assert_eq!(extract(&p, p.metric().unwrap(), &rs).unwrap(), Extracted::Pending);
+        assert_eq!(extract(&p, p.metric().unwrap(), &rs).unwrap(), Extracted::Missing(vec!["b".into()]));
     }
 
     #[test]
@@ -524,7 +529,7 @@ mod tests {
         let p = providers.iter().find(|p| p.manifest.id == "typesafe").unwrap();
         let rows = serde_json::json!([{ "ok": true, "data": { "balanceCents": 5 } }]);
         let rs = [response("https://console.typesafe.ai/api/api-keys", rows)];
-        assert_eq!(extract(p, p.metric().unwrap(), &rs).unwrap(), Extracted::Pending);
+        assert_eq!(extract(p, p.metric().unwrap(), &rs).unwrap(), Extracted::Missing(vec!["keys".into()]));
     }
 
     #[test]

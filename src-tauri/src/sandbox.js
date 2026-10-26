@@ -51,8 +51,8 @@
   const helpers = Object.freeze({ money, number });
 
   // Name each capture by the latest response whose URL matches its pattern, then call the
-  // provider's function for the metric. Returns {status: "pending"} until every required
-  // capture has arrived and the function returns a result.
+  // provider's function for the metric. Until there's a result, says why: required
+  // captures that haven't arrived ("missing"), or the function returned null ("empty").
   function run(metricJson, responsesJson) {
     const metric = JSON.parse(metricJson);
     const responses = JSON.parse(responsesJson);
@@ -61,9 +61,10 @@
       const re = new RegExp(pattern);
       for (const r of responses) if (re.test(r.url)) captures[name] = r.body;
     }
-    if (metric.required.some((name) => !(name in captures))) return JSON.stringify({ status: "pending" });
+    const missing = metric.required.filter((name) => !(name in captures));
+    if (missing.length) return JSON.stringify({ status: "missing", missing });
     const out = globalThis[metric.key](captures, helpers);
-    if (out == null) return JSON.stringify({ status: "pending" });
+    if (out == null) return JSON.stringify({ status: "empty" });
     return JSON.stringify({ status: "ok", value: out.value, detail: out.detail ?? null });
   }
 

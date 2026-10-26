@@ -533,9 +533,19 @@ fn scrape_one(app: AppHandle, webview: Webview, provider: Provider) {
                 last = Balance { id: id.clone(), status: "ok".into(), value: Some(value), detail, url: last.url, updated: Some(now_secs()) };
                 break;
             }
-            Ok(Extracted::Pending) => {
+            // Say which file to fix: a capture pattern that no longer matches (the API moved)
+            // or extract.js that no longer finds the balance (the response changed).
+            Ok(Extracted::Missing(names)) => {
                 last.status = "notfound".into();
-                last.detail = None;
+                let wanted: Vec<String> = names.iter().map(|n| format!("{n}: {}", metric.captures[n])).collect();
+                last.detail = Some(format!(
+                    "The page never fetched the response this provider reads ({}). The console's API may have moved; the provider's manifest.json needs updating.",
+                    wanted.join(", ")
+                ));
+            }
+            Ok(Extracted::Empty) => {
+                last.status = "notfound".into();
+                last.detail = Some("The response arrived but no balance came out of it. Its format may have changed; the provider's extract.js needs updating.".into());
             }
             Err(e) => {
                 last.status = "notfound".into();
