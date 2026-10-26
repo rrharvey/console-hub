@@ -73,7 +73,7 @@ Match the symptom to INSTALL.md "Troubleshooting" first. Common ones:
 | Linux build: `webkit2gtk-4.1` / `javascriptcoregtk` not found | WebKitGTK dev packages missing |
 | Linux: window blank or flickering | GPU driver vs WebKitGTK; start with `WEBKIT_DISABLE_DMABUF_RENDERER=1` |
 | Linux AppImage won't start | FUSE 2 missing (`libfuse2`, or `libfuse2t64` on Ubuntu 24.04) |
-| macOS: "can't be opened" / "is damaged" | Unsigned build; Privacy & Security > Open Anyway, or `xattr -dr com.apple.quarantine "/Applications/Console Hub.app"` |
+| macOS: "is damaged and can't be opened" | Unsigned (ad-hoc) build, quarantined on download: `xattr -dr com.apple.quarantine "/Applications/Console Hub.app"`. For "can't verify the developer", Privacy & Security > Open Anyway also works |
 | Windows: "Windows protected your PC" | Unsigned build; More info > Run anyway |
 | A balance says "sign in" | That console's session expired; open it in the app and sign in |
 | A balance says "not found" | The provider needs updating; hover it for why, then see the write-provider skill |

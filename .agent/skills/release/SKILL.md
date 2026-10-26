@@ -50,9 +50,12 @@ Windows about 2×, so don't loop on it.
    `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 6. **Watch**: `gh run watch` on the Release run. On failure:
    `gh run view <id> --log-failed`.
-7. **Check the draft**: `gh release view vX.Y.Z` should list a `.dmg` for aarch64 and for
-   x64, a Windows `-setup.exe` and `.msi`, and a Linux `.deb`, `.rpm` and `.AppImage`.
-   Write the release notes.
+7. **Check the draft**: `gh release list` should show exactly one draft for vX.Y.Z.
+   The four build jobs each find or create it, and this path hadn't been run before the
+   first release. If there are several, move the assets onto one and delete the rest.
+   `gh release view vX.Y.Z` should list seven installers: a `.dmg` for aarch64 and for x64,
+   a Windows `-setup.exe` and `.msi`, and a Linux `.deb`, `.rpm` and `.AppImage`. Write the
+   release notes.
 8. **Hand over**: tell the person the draft is ready. Publish only if they ask:
    `gh release edit vX.Y.Z --draft=false`.
 

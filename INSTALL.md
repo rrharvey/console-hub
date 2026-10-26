@@ -23,11 +23,14 @@ past that.
 1. Download `Console.Hub_<version>_aarch64.dmg` for Apple Silicon (M1 and later), or
    `..._x64.dmg` for an Intel Mac. Apple menu > About This Mac shows which you have.
 2. Open the `.dmg` and drag **Console Hub** to **Applications**.
-3. Open it. macOS says it "can't be opened" or "is damaged" because it isn't signed.
-   Either open System Settings > Privacy & Security and click **Open Anyway** next to the
-   message about Console Hub, or run this once in Terminal:
+3. Open it. The app isn't signed with an Apple Developer ID, so macOS blocks the
+   downloaded copy, usually saying it "is damaged and can't be opened". It isn't damaged.
+   Run this once in Terminal, then open it again:
 
        xattr -dr com.apple.quarantine "/Applications/Console Hub.app"
+
+   If macOS instead says it can't verify the developer, you can also go to System
+   Settings > Privacy & Security and click **Open Anyway**.
 
 ### Windows
 
