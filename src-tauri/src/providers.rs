@@ -463,6 +463,10 @@ mod tests {
         let want = Extracted::Ok { value: "none".into(), detail: None };
         assert_eq!(extract(&p, p.metric().unwrap(), &rs).unwrap(), want);
 
+        let p = provider(manifest(), "function balance() { const a = []; for (;;) a.push('x'.repeat(1 << 20) + a.length); }").unwrap();
+        let err = extract(&p, p.metric().unwrap(), &rs).unwrap_err();
+        assert!(err.contains("memory"), "{err}");
+
         let p = provider(manifest(), "function balance() { for (;;) {} }").unwrap();
         let started = Instant::now();
         assert!(extract(&p, p.metric().unwrap(), &rs).is_err());
