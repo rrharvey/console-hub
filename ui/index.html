@@ -32,14 +32,15 @@
   button { all: unset; box-sizing: border-box; cursor: pointer; border-radius: 6px; }
   button:focus-visible { outline: 2px solid var(--accent); }
   nav button {
-    display: flex; align-items: baseline; gap: 8px; width: 100%;
+    display: flex; align-items: center; gap: 8px; width: 100%;
     padding: 8px 10px; margin-bottom: 2px;
   }
   nav button:hover { background: var(--hover); }
   nav button.active { background: var(--active); color: var(--accent); font-weight: 600; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Credit balance, right-aligned next to the name. */
-  .value { flex: none; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* Same size as the name, so both sit on one line; a smaller balance looked low. */
+  .value { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
   .value.loading, .value.unsupported { color: var(--muted); font-weight: 400; }
   .value.stale { opacity: .55; }
   .value.login { color: var(--warn); font-weight: 400; }
