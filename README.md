@@ -5,19 +5,39 @@ its name. Each console is a real child webview (Tauri multiwebview, `unstable` f
 so logins work like normal and framing restrictions don't apply. No keys are stored.
 Runs on macOS, Windows and Linux.
 
+- **[Quickstart](#quickstart)**: build and run it from source in five commands.
 - **[INSTALL.md](INSTALL.md)**: install a release or build from source, on each OS.
 - **[PLUGINS.md](PLUGINS.md)**: write a provider for another console.
 - **Agents**: [AGENTS.md](AGENTS.md) lists skills for setup, writing providers and
   releasing, in `.agent/skills/`.
 
-## Develop
+## Quickstart
 
-Prerequisites for each OS are in [INSTALL.md](INSTALL.md#build-from-source).
+You need Node.js (LTS), Rust 1.90+ (`rustup update`) and Tauri's OS prerequisites:
+Xcode Command Line Tools on macOS, the MSVC C++ Build Tools on Windows, the WebKitGTK 4.1
+dev packages on Linux. The exact packages are in [INSTALL.md](INSTALL.md#build-from-source).
 
+    git clone https://github.com/rrharvey/console-hub.git
+    cd console-hub
     npm install
+    npm test              # compiles everything; a missing toolchain piece fails here, readably
     npm run dev           # run the app
-    npm test              # Rust tests, including every sample provider's fixtures
+
+The first build downloads and compiles the crates, which takes a few minutes.
+
+In the app, click **+** at the bottom of the sidebar, choose the repo's `samples` folder and
+click **Allow**. Click a console and sign in as usual. Its balance shows up next to its name
+within a minute.
+
+Other commands:
+
     npm run build         # release app and installers (macOS: also installs to /Applications)
+    npm run check-js      # type-check the samples' extract.js
+    npm run test-provider -- <provider folder>   # validate a provider and run its fixtures
+
+To add a console, see [PLUGINS.md](PLUGINS.md). To use the app without building it,
+install it from [Releases](https://github.com/rrharvey/console-hub/releases); the builds
+are unsigned, and [INSTALL.md](INSTALL.md#install-a-release) covers the OS warnings.
 
 CI (`.github/workflows/ci.yml`) runs the tests on macOS, Windows and Linux for every push
 and pull request. Releases are built by `.github/workflows/release.yml`; see
