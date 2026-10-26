@@ -52,6 +52,7 @@
   #updated { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   footer button { padding: 2px 8px; font-size: 13px; }
   footer button:hover { background: var(--hover); color: var(--fg); }
+  .empty { color: var(--muted); margin: 4px 10px; font-size: 12px; line-height: 1.5; user-select: text; -webkit-user-select: text; }
   #err { color: var(--bad); padding: 0 18px 8px; font-size: 11px; white-space: pre-line; }
 </style>
 </head>
@@ -61,7 +62,7 @@
   <div id="err"></div>
   <footer>
     <span id="updated"></span>
-    <button id="add" title="Add a provider from a folder…">+</button>
+    <button id="add" title="Add providers from a folder…">+</button>
     <button id="refresh" title="Refresh balances">↻</button>
   </footer>
   <script>
@@ -115,7 +116,7 @@
       b.addEventListener("click", () => select(p, b));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        invoke("vendor_menu", { id: p.id, url: p.url, user: p.user }).catch((e) => { err.textContent = String(e); });
+        invoke("vendor_menu", { id: p.id, url: p.url }).catch((e) => { err.textContent = String(e); });
       });
       list.appendChild(b);
     }
@@ -128,6 +129,13 @@
         list.replaceChildren();
         values = {};
         providers.forEach(addProvider);
+        if (!providers.length) {
+          const empty = document.createElement("p");
+          empty.className = "empty";
+          empty.textContent = "No providers yet. Click + below and choose a provider folder, "
+            + "or the samples folder in the Console Hub repo to add several at once.";
+          list.appendChild(empty);
+        }
         // A provider that failed to load is left out; say which and why.
         err.textContent = errors.map(e => `Provider ${e}`).join("\n");
         const balances = await invoke("get_balances");
@@ -186,14 +194,11 @@
     document.getElementById("add").addEventListener("click", async () => {
       err.textContent = "";
       try {
-        const id = await invoke("add_provider");
-        if (!id) return;
+        const ids = await invoke("add_provider");
+        if (!ids.length) return;
         await window.onProvidersChanged();
-        const row = list.querySelector(`[data-id="${id}"]:not([data-review])`);
-        if (row) {
-          invoke("refresh_balances", { only: id }).catch(() => {});
-          row.click();
-        }
+        for (const id of ids) invoke("refresh_balances", { only: id }).catch(() => {});
+        list.querySelector(`[data-id="${ids[0]}"]`)?.click();
       } catch (e) {
         err.textContent = String(e);
       }

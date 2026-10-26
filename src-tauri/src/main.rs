@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use providers::{Catalog, Extracted, Provider, Source};
+use providers::{Catalog, Extracted, Provider};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use tauri::{
@@ -213,23 +213,14 @@ fn show_vendor(app: AppHandle, id: String, url: String) -> Result<(), String> {
 // Providers and balance scraping
 // ---------------------------------------------------------------------------------
 
-/// The providers in use (see providers::catalog). Rebuilt when the user allows, adds or
+/// The user's providers (see providers::catalog). Rebuilt when the user allows, adds or
 /// removes one.
 #[derive(Default)]
 struct Providers(Mutex<Catalog>);
 
-/// Debug builds read `providers/` from the source tree, so editing a provider only needs
-/// an app restart. Release builds read the copy bundled into the app's resources.
-fn bundled_providers_dir(app: &AppHandle) -> PathBuf {
-    if cfg!(debug_assertions) {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../providers")
-    } else {
-        app.path().resource_dir().unwrap_or_default().join("providers")
-    }
-}
-
-/// Providers the user added. It follows the bundle identifier, so unlike logins the dev
-/// build and the installed app share it.
+/// The user's providers folder. None are built in; the repo's `samples/` has some to add.
+/// It follows the bundle identifier, so unlike logins the dev build and the installed
+/// app share it.
 fn user_providers_dir(app: &AppHandle) -> PathBuf {
     app.path().app_data_dir().unwrap_or_default().join("providers")
 }
@@ -241,7 +232,7 @@ fn settings_path(app: &AppHandle) -> PathBuf {
 /// Rebuild the provider list from disk and the user's approvals.
 fn reload_providers(app: &AppHandle) {
     let approved = settings::load(&settings_path(app)).approved;
-    let catalog = providers::catalog(&bundled_providers_dir(app), &user_providers_dir(app), &approved);
+    let catalog = providers::catalog(&user_providers_dir(app), &approved);
     for e in &catalog.errors {
         eprintln!("provider {e}");
     }
@@ -281,10 +272,8 @@ struct ProviderInfo {
     url: String,
     external: bool,
     balance: bool,
-    /// From the user's folder and not allowed yet (or changed since): click to review.
+    /// Not allowed yet, or changed since: click to review.
     review: bool,
-    /// From the user's folder, so it can be removed.
-    user: bool,
 }
 
 #[derive(Serialize)]
@@ -303,7 +292,6 @@ fn list_providers(state: State<Providers>) -> ProviderList {
         external: p.manifest.external,
         balance: !review && p.metric().is_some() && !p.manifest.external,
         review,
-        user: p.source == Source::User,
     };
     let mut providers: Vec<ProviderInfo> =
         c.active.iter().map(|p| info(p, false)).chain(c.pending.iter().map(|p| info(p, true))).collect();
@@ -311,95 +299,123 @@ fn list_providers(state: State<Providers>) -> ProviderList {
     ProviderList { providers, errors: c.errors.clone() }
 }
 
-/// Ask the user to allow a provider from their folder, showing what it will do. Allowing
-/// stores the hash of exactly what was shown, so a file changed meanwhile stays waiting.
-#[tauri::command]
-async fn review_provider(app: AppHandle, id: String) -> Result<bool, String> {
-    let (p, replaces) = {
-        let c = app.state::<Providers>();
-        let c = c.0.lock().unwrap();
-        let p = c.pending.iter().find(|p| p.manifest.id == id).cloned();
-        (p.ok_or_else(|| format!("{id} is not waiting for review"))?, c.bundled_ids.contains(&id))
-    };
-    let path = settings_path(&app);
-    let mut s = settings::load(&path);
-    let changed = s.approved.contains_key(&id);
-    if !ask_to_allow(&app, &p, replaces, changed) {
-        return Ok(false);
-    }
-    s.approved.insert(id.clone(), p.hash.clone());
-    settings::save(&path, &s)?;
-    forget_provider(&app, &id);
-    reload_providers(&app);
-    Ok(true)
-}
-
-fn ask_to_allow(app: &AppHandle, p: &Provider, replaces: bool, changed: bool) -> bool {
+/// What a provider will do, for the approval dialog. URLs are shown in their parsed form,
+/// a second guard against odd characters (validation refuses them).
+fn describe(p: &Provider) -> Vec<String> {
     let m = &p.manifest;
-    // The parsed form, as a second guard against odd characters (validation refuses them).
     let shown = |url: &str| Url::parse(url).map(|u| u.to_string()).unwrap_or_else(|_| url.to_string());
-    let mut lines = Vec::new();
-    if changed {
-        lines.push("It changed since you allowed it.".to_string());
-    }
-    if let Some(author) = &m.author {
-        lines.push(format!("By {author} (not verified)"));
-    }
-    lines.push(format!("From {}", tilde(&p.dir)));
-    if replaces {
-        lines.push(format!("It replaces the \"{}\" provider that comes with Console Hub.", m.id));
-    }
-    lines.push(String::new());
+    let mut lines = vec![match &m.author {
+        Some(author) => format!("{} \u{2014} by {author} (not verified)", m.name),
+        None => m.name.clone(),
+    }];
     lines.push(format!("Console: {}", shown(&m.url)));
     match p.metric() {
         Some(metric) => {
-            lines.push("To read your balance it loads this page in the background, signed in as you:".into());
-            lines.push(shown(&metric.page));
+            lines.push(format!("Loads {} in the background, signed in as you,", shown(&metric.page)));
             lines.push(format!("and reads responses from {}.", m.domains.join(", ")));
         }
-        None => lines.push("It only opens its console; it reads nothing in the background.".into()),
+        None => lines.push("Reads nothing in the background.".into()),
+    }
+    lines
+}
+
+/// Ask to allow `providers`, listing what each will do. `notes` go above the list.
+fn ask_to_allow(app: &AppHandle, providers: &[Provider], notes: &[String]) -> bool {
+    let mut lines: Vec<String> = notes.to_vec();
+    for p in providers {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.extend(describe(p));
     }
     lines.push(String::new());
-    lines.push("Its code runs in a sandbox with no network access. Only allow providers from people you trust.".into());
+    lines.push("Provider code runs in a sandbox with no network access. Only allow providers from people you trust.".into());
+    let title = match providers {
+        [p] => format!("Allow the provider \u{201c}{}\u{201d}?", p.manifest.name),
+        _ => format!("Allow these {} providers?", providers.len()),
+    };
     app.dialog()
         .message(lines.join("\n"))
-        .title(format!("Allow the provider \u{201c}{}\u{201d}?", m.name))
+        .title(title)
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom("Allow".into(), "Don't Allow".into()))
         .blocking_show()
 }
 
-/// Pick a provider folder, check it, copy it into the user's folder and ask to allow it.
-/// Returns the new provider's id, or None if the user cancelled.
-#[tauri::command]
-async fn add_provider(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(picked) = app.dialog().file().set_title("Choose a provider folder").blocking_pick_folder() else {
-        return Ok(None);
-    };
-    let folder = picked.into_path().map_err(|e| e.to_string())?;
-    let p = providers::inspect(&folder).map_err(|e| format!("{}: {e}", tilde(&folder)))?;
-    let id = p.manifest.id.clone();
-    let user_dir = user_providers_dir(&app);
-    if user_dir.join(&id).exists() {
-        let replace = app
-            .dialog()
-            .message(format!("Your providers folder already has a provider with the id \"{id}\"."))
-            .title("Replace it?")
-            .buttons(MessageDialogButtons::OkCancelCustom("Replace".into(), "Cancel".into()))
-            .blocking_show();
-        if !replace {
-            return Ok(None);
-        }
+/// Record that the user allowed exactly these contents.
+fn approve(app: &AppHandle, providers: &[Provider]) -> Result<(), String> {
+    let path = settings_path(app);
+    let mut s = settings::load(&path);
+    for p in providers {
+        s.approved.insert(p.manifest.id.clone(), p.hash.clone());
     }
-    providers::install(&p, &user_dir)?;
+    settings::save(&path, &s)
+}
+
+/// Ask the user to allow a provider that's in their folder but not allowed (or changed
+/// since). Allowing stores the hash of exactly what was shown, so a file changed while
+/// the dialog was open stays waiting.
+#[tauri::command]
+async fn review_provider(app: AppHandle, id: String) -> Result<bool, String> {
+    let p = {
+        let c = app.state::<Providers>();
+        let c = c.0.lock().unwrap();
+        c.pending.iter().find(|p| p.manifest.id == id).cloned()
+    };
+    let p = p.ok_or_else(|| format!("{id} is not waiting for review"))?;
+    let mut notes = vec![format!("In {}", tilde(&p.dir))];
+    if settings::load(&settings_path(&app)).approved.contains_key(&id) {
+        notes.push("It changed since you allowed it.".into());
+    }
+    if !ask_to_allow(&app, std::slice::from_ref(&p), &notes) {
+        return Ok(false);
+    }
+    approve(&app, std::slice::from_ref(&p))?;
     forget_provider(&app, &id);
     reload_providers(&app);
-    // Ask right away, unless these exact contents were allowed before.
-    let waiting = app.state::<Providers>().0.lock().unwrap().pending.iter().any(|q| q.manifest.id == id);
-    if waiting {
-        review_provider(app.clone(), id.clone()).await?;
+    Ok(true)
+}
+
+/// Pick a provider folder, or a folder of them such as the repo's `samples/`, check them,
+/// and ask once to allow them all. Only then are they copied into the user's folder.
+/// Returns the ids added (empty if the user cancelled).
+#[tauri::command]
+async fn add_provider(app: AppHandle) -> Result<Vec<String>, String> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title("Choose a provider folder, or a folder of them")
+        .blocking_pick_folder()
+    else {
+        return Ok(Vec::new());
+    };
+    let folder = picked.into_path().map_err(|e| e.to_string())?;
+    let (found, errors) = providers::inspect_all(&folder);
+    if found.is_empty() {
+        return Err(format!("{}: {}", tilde(&folder), errors.join("; ")));
     }
-    Ok(Some(id))
+    let user_dir = user_providers_dir(&app);
+    let mut notes = vec![format!("From {}", tilde(&folder))];
+    let replacing: Vec<&str> = found.iter().filter(|p| user_dir.join(&p.manifest.id).exists()).map(|p| p.manifest.name.as_str()).collect();
+    if !replacing.is_empty() {
+        notes.push(format!("Replaces your current copy of {}.", replacing.join(", ")));
+    }
+    if !errors.is_empty() {
+        notes.push(format!("Skipped, with problems: {}", errors.join("; ")));
+    }
+    if !ask_to_allow(&app, &found, &notes) {
+        return Ok(Vec::new());
+    }
+    let mut installed = Vec::new();
+    for p in &found {
+        installed.push(providers::install(p, &user_dir)?);
+    }
+    approve(&app, &installed)?;
+    for p in &installed {
+        forget_provider(&app, &p.manifest.id);
+    }
+    reload_providers(&app);
+    Ok(installed.into_iter().map(|p| p.manifest.id).collect())
 }
 
 /// Delete a provider from the user's folder, after asking. Runs off the main thread
@@ -408,7 +424,7 @@ fn remove_provider(app: &AppHandle, id: &str) -> Result<(), String> {
     let found = {
         let c = app.state::<Providers>();
         let c = c.0.lock().unwrap();
-        c.active.iter().chain(c.pending.iter()).find(|p| p.manifest.id == id && p.source == Source::User).cloned()
+        c.active.iter().chain(c.pending.iter()).find(|p| p.manifest.id == id).cloned()
     };
     let p = found.ok_or_else(|| format!("{id} is not in your providers folder"))?;
     let remove = app
@@ -657,18 +673,15 @@ fn open_in_browser(url: String) -> Result<(), String> {
 }
 
 /// Right-click menu for a sidebar provider. Shown at the cursor; the click is handled
-/// in `on_menu_event`. Providers from the user's folder can also be removed.
+/// in `on_menu_event`.
 #[tauri::command]
-fn vendor_menu(app: AppHandle, window: tauri::Window, id: String, url: String, user: bool) -> Result<(), String> {
+fn vendor_menu(app: AppHandle, window: tauri::Window, id: String, url: String) -> Result<(), String> {
     let copy = MenuItem::with_id(&app, format!("{COPY_LINK_PREFIX}{url}"), "Copy Link", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&copy]).map_err(|e| e.to_string())?;
-    if user {
-        let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
-        let remove = MenuItem::with_id(&app, format!("{REMOVE_PROVIDER_PREFIX}{id}"), "Remove Provider\u{2026}", true, None::<&str>)
-            .map_err(|e| e.to_string())?;
-        menu.append_items(&[&separator, &remove]).map_err(|e| e.to_string())?;
-    }
+    let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+    let remove = MenuItem::with_id(&app, format!("{REMOVE_PROVIDER_PREFIX}{id}"), "Remove Provider\u{2026}", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&app, &[&copy, &separator, &remove]).map_err(|e| e.to_string())?;
     window.popup_menu(&menu).map_err(|e| e.to_string())
 }
 

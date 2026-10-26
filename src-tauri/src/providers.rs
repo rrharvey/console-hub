@@ -1,4 +1,4 @@
-//! Provider plugins. Each provider is a folder in `providers/`:
+//! Provider plugins. Each provider is a folder with:
 //!
 //! - `manifest.json`: name, console URL, the domains it may touch, and for its balance
 //!   the page to load and the URL patterns of the JSON responses to capture.
@@ -9,8 +9,9 @@
 //! no Tauri commands, with time and memory limits. The scraper page (scrape.js) only
 //! records the responses the manifest asks for.
 //!
-//! Providers bundled with the app are trusted. Providers in the user's folder run only
-//! once the user has allowed their exact contents (`Provider::hash`); see `catalog`.
+//! No providers are built in. The user adds them to their providers folder (samples live
+//! in the repo's `samples/`), and each runs only once the user has allowed its exact
+//! contents (`Provider::hash`); see `catalog`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -65,14 +66,6 @@ pub struct Metric {
     pub required: Option<Vec<String>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Source {
-    /// Shipped inside the app.
-    Bundled,
-    /// From the user's providers folder; needs the user's approval.
-    User,
-}
-
 #[derive(Clone, Debug)]
 pub struct Provider {
     pub manifest: Manifest,
@@ -80,7 +73,6 @@ pub struct Provider {
     pub manifest_raw: String,
     pub script: String,
     pub dir: PathBuf,
-    pub source: Source,
     /// SHA-256 of manifest.json and extract.js. Approval is tied to this value.
     pub hash: String,
 }
@@ -109,22 +101,13 @@ pub enum Extracted {
 
 /// Load every provider folder in `dir`, sorted by name. A provider that fails to load is
 /// left out and reported in the error list; it never stops the others. A missing folder
-/// is just empty: most installs have no user providers.
-pub fn load_dir(dir: &Path, source: Source) -> (Vec<Provider>, Vec<String>) {
+/// is just empty: a new install has no providers.
+pub fn load_dir(dir: &Path) -> (Vec<Provider>, Vec<String>) {
     let mut providers = Vec::new();
     let mut errors = Vec::new();
-    let mut folders: Vec<_> = match std::fs::read_dir(dir) {
-        Ok(entries) => entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (providers, errors),
-        Err(e) => return (providers, vec![format!("{}: {e}", dir.display())]),
-    };
-    folders.sort();
-    for folder in folders {
+    for folder in subfolders(dir, &mut errors) {
         let name = folder.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if name.starts_with('.') || name.starts_with('_') {
-            continue;
-        }
-        match load(&folder, source) {
+        match load(&folder) {
             Ok(p) => providers.push(p),
             Err(e) => errors.push(format!("{name}: {e}")),
         }
@@ -133,13 +116,28 @@ pub fn load_dir(dir: &Path, source: Source) -> (Vec<Provider>, Vec<String>) {
     (providers, errors)
 }
 
-fn load(folder: &Path, source: Source) -> Result<Provider, String> {
+/// Folders in `dir`, sorted, leaving out ones starting with `.` or `_` (install staging).
+fn subfolders(dir: &Path, errors: &mut Vec<String>) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => {
+            errors.push(format!("{}: {e}", dir.display()));
+            Vec::new()
+        }
+    };
+    folders.retain(|f| !f.file_name().unwrap_or_default().to_string_lossy().starts_with(['.', '_']));
+    folders.sort();
+    folders
+}
+
+fn load(folder: &Path) -> Result<Provider, String> {
     let folder_name = folder.file_name().unwrap_or_default().to_string_lossy().to_string();
-    load_checked(folder, source, Some(&folder_name))
+    load_checked(folder, Some(&folder_name))
 }
 
 /// Load and validate a provider folder. `folder_name`, when given, must equal the id.
-fn load_checked(folder: &Path, source: Source, folder_name: Option<&str>) -> Result<Provider, String> {
+fn load_checked(folder: &Path, folder_name: Option<&str>) -> Result<Provider, String> {
     let raw = std::fs::read_to_string(folder.join("manifest.json")).map_err(|e| format!("manifest.json: {e}"))?;
     let mut manifest: Manifest = serde_json::from_str(&raw).map_err(|e| format!("manifest.json: {e}"))?;
     let script = match std::fs::read_to_string(folder.join("extract.js")) {
@@ -149,7 +147,7 @@ fn load_checked(folder: &Path, source: Source, folder_name: Option<&str>) -> Res
     };
     validate(&mut manifest, folder_name)?;
     let hash = content_hash(&raw, &script);
-    let provider = Provider { manifest, manifest_raw: raw, script, dir: folder.to_path_buf(), source, hash };
+    let provider = Provider { manifest, manifest_raw: raw, script, dir: folder.to_path_buf(), hash };
     if let Some(metric) = provider.metric() {
         let json = serde_json::to_string(metric).map_err(|e| e.to_string())?;
         sandbox(&provider.script, |api| api.get::<_, Function>("check")?.call::<_, ()>((json,)))?;
@@ -167,9 +165,36 @@ pub fn content_hash(manifest: &str, script: &str) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Check a provider folder the user picked, wherever it is and whatever it's called.
-pub fn inspect(folder: &Path) -> Result<Provider, String> {
-    load_checked(folder, Source::User, None)
+/// Check the providers in a folder the user picked, wherever it is and whatever it's
+/// called: the folder itself if it has a manifest.json, otherwise each folder inside it
+/// that has one (e.g. the repo's `samples/`). Returns the good ones and why others failed.
+pub fn inspect_all(folder: &Path) -> (Vec<Provider>, Vec<String>) {
+    if folder.join("manifest.json").is_file() {
+        return match load_checked(folder, None) {
+            Ok(p) => (vec![p], Vec::new()),
+            Err(e) => (Vec::new(), vec![e]),
+        };
+    }
+    let mut providers = Vec::new();
+    let mut errors = Vec::new();
+    for sub in subfolders(folder, &mut errors) {
+        if !sub.join("manifest.json").is_file() {
+            continue;
+        }
+        let name = sub.file_name().unwrap_or_default().to_string_lossy().to_string();
+        match load_checked(&sub, None) {
+            Ok(p) if providers.iter().any(|q: &Provider| q.manifest.id == p.manifest.id) => {
+                errors.push(format!("{name}: another folder here also has the id \"{}\"", p.manifest.id))
+            }
+            Ok(p) => providers.push(p),
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+    if providers.is_empty() && errors.is_empty() {
+        errors.push("no manifest.json here or in the folders inside it".into());
+    }
+    providers.sort_by_key(|p| p.manifest.name.to_lowercase());
+    (providers, errors)
 }
 
 /// Copy a checked provider into the user's providers folder as `<id>/`, replacing any
@@ -190,39 +215,22 @@ pub fn install(p: &Provider, user_dir: &Path) -> Result<Provider, String> {
         std::fs::remove_dir_all(&target).map_err(io)?;
     }
     std::fs::rename(&staging, &target).map_err(io)?;
-    load(&target, Source::User)
+    load(&target)
 }
 
-/// The providers to show: bundled ones, with user providers added or replacing a
-/// bundled one of the same id. A user provider runs (`active`) only when its hash is
-/// the one the user approved; otherwise it waits for review (`pending`) in place of
-/// the bundled one. A user provider that fails to load replaces nothing.
+/// The user's providers: the ones whose hash is the one the user allowed run (`active`);
+/// the rest, new or changed since, wait for review (`pending`).
 #[derive(Default)]
 pub struct Catalog {
     pub active: Vec<Provider>,
     pub pending: Vec<Provider>,
     pub errors: Vec<String>,
-    /// Ids of the bundled providers, so the approval dialog can say what a user one replaces.
-    pub bundled_ids: Vec<String>,
 }
 
-pub fn catalog(bundled_dir: &Path, user_dir: &Path, approved: &BTreeMap<String, String>) -> Catalog {
-    let (bundled, mut errors) = load_dir(bundled_dir, Source::Bundled);
-    let (user, user_errors) = load_dir(user_dir, Source::User);
-    errors.extend(user_errors);
-    let mut active: Vec<Provider> = bundled.iter().filter(|b| !user.iter().any(|u| u.manifest.id == b.manifest.id)).cloned().collect();
-    let mut pending = Vec::new();
-    for u in user {
-        if approved.get(&u.manifest.id) == Some(&u.hash) {
-            active.push(u);
-        } else {
-            pending.push(u);
-        }
-    }
-    active.sort_by_key(|p| p.manifest.name.to_lowercase());
-    pending.sort_by_key(|p| p.manifest.name.to_lowercase());
-    let bundled_ids = bundled.into_iter().map(|b| b.manifest.id).collect();
-    Catalog { active, pending, errors, bundled_ids }
+pub fn catalog(user_dir: &Path, approved: &BTreeMap<String, String>) -> Catalog {
+    let (providers, errors) = load_dir(user_dir);
+    let (active, pending) = providers.into_iter().partition(|p| approved.get(&p.manifest.id) == Some(&p.hash));
+    Catalog { active, pending, errors }
 }
 
 /// Checks that don't need the JS engine. Fills in `required` when it's left out.
@@ -392,8 +400,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn providers_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../providers")
+    fn samples_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../samples")
     }
 
     fn provider(manifest: serde_json::Value, script: &str) -> Result<Provider, String> {
@@ -403,7 +411,7 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("manifest.json"), manifest.to_string()).unwrap();
         std::fs::write(folder.join("extract.js"), script).unwrap();
-        let out = load(&folder, Source::User);
+        let out = load(&folder);
         let _ = std::fs::remove_dir_all(&dir);
         out
     }
@@ -428,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn bundled_providers_load() {
-        let (providers, errors) = load_dir(&providers_dir(), Source::Bundled);
+    fn samples_load() {
+        let (providers, errors) = load_dir(&samples_dir());
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(providers.len(), 7);
     }
@@ -437,7 +445,7 @@ mod tests {
     /// Each fixture lists the responses a page fetched and the result the sidebar should
     /// show. The expectations came from the extractors these plugins replaced.
     #[test]
-    fn bundled_provider_fixtures() {
+    fn sample_fixtures() {
         #[derive(Deserialize)]
         struct Fixture {
             responses: Vec<Response>,
@@ -448,10 +456,10 @@ mod tests {
             value: String,
             detail: Option<String>,
         }
-        let (providers, _) = load_dir(&providers_dir(), Source::Bundled);
+        let (providers, _) = load_dir(&samples_dir());
         let mut checked = 0;
         for p in &providers {
-            let dir = providers_dir().join(&p.manifest.id).join("fixtures");
+            let dir = samples_dir().join(&p.manifest.id).join("fixtures");
             let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
             files.sort();
             assert!(!files.is_empty(), "{} has no fixtures", p.manifest.id);
@@ -525,7 +533,7 @@ mod tests {
 
     #[test]
     fn typesafe_pattern_ignores_api_keys() {
-        let (providers, _) = load_dir(&providers_dir(), Source::Bundled);
+        let (providers, _) = load_dir(&samples_dir());
         let p = providers.iter().find(|p| p.manifest.id == "typesafe").unwrap();
         let rows = serde_json::json!([{ "ok": true, "data": { "balanceCents": 5 } }]);
         let rs = [response("https://console.typesafe.ai/api/api-keys", rows)];
@@ -616,7 +624,7 @@ mod tests {
 
     #[test]
     fn missing_user_folder_is_empty_not_an_error() {
-        let (ps, errors) = load_dir(Path::new("/nonexistent/console-hub/providers"), Source::User);
+        let (ps, errors) = load_dir(Path::new("/nonexistent/console-hub/providers"));
         assert!(ps.is_empty() && errors.is_empty(), "{errors:?}");
     }
 
@@ -630,55 +638,58 @@ mod tests {
     }
 
     #[test]
-    fn catalog_merges_bundled_and_user_providers() {
-        let (bundled_dir, user_dir) = (temp_dir("bundled"), temp_dir("user"));
-        let mut openai = manifest();
-        openai["id"] = "openai".into();
-        openai["name"] = "OpenAI".into();
-        write_provider(&bundled_dir, "openai", &openai, SCRIPT);
-        let mut tavily = openai.clone();
-        tavily["id"] = "tavily".into();
-        tavily["name"] = "Tavily".into();
-        write_provider(&bundled_dir, "tavily", &tavily, SCRIPT);
+    fn catalog_runs_only_what_was_allowed() {
+        let user_dir = temp_dir("user");
+        let mut other = manifest();
+        other["id"] = "other".into();
+        other["name"] = "Other".into();
+        write_provider(&user_dir, "demo", &manifest(), SCRIPT);
+        write_provider(&user_dir, "other", &other, SCRIPT);
+        write_provider(&user_dir, "broken", &serde_json::json!({ "id": "broken" }), SCRIPT);
 
-        // A user "openai" that fails to load replaces nothing: the bundled one stays.
-        write_provider(&user_dir, "openai", &openai, "function nope() {}");
-        let c = catalog(&bundled_dir, &user_dir, &BTreeMap::new());
-        assert_eq!(ids(&c.active), ["openai", "tavily"]);
-        assert!(c.active[0].source == Source::Bundled && c.pending.is_empty());
+        let c = catalog(&user_dir, &BTreeMap::new());
+        assert!(c.active.is_empty());
+        assert_eq!(ids(&c.pending), ["demo", "other"]);
         assert_eq!(c.errors.len(), 1, "{:?}", c.errors);
 
-        // A valid user "openai" waits for review in place of the bundled one.
-        write_provider(&user_dir, "openai", &openai, SCRIPT);
-        let mut extra = openai.clone();
-        extra["id"] = "extra".into();
-        extra["name"] = "Extra".into();
-        write_provider(&user_dir, "extra", &extra, SCRIPT);
-        let c = catalog(&bundled_dir, &user_dir, &BTreeMap::new());
-        assert_eq!(ids(&c.active), ["tavily"]);
-        assert_eq!(ids(&c.pending), ["extra", "openai"]);
-        assert_eq!(c.bundled_ids, ["openai", "tavily"]);
-
-        // Approving its exact contents makes it run; changing a file undoes that.
-        let hash = c.pending.iter().find(|p| p.manifest.id == "openai").unwrap().hash.clone();
-        let approved = BTreeMap::from([("openai".to_string(), hash)]);
-        let c = catalog(&bundled_dir, &user_dir, &approved);
-        assert_eq!(ids(&c.active), ["openai", "tavily"]);
-        assert_eq!(c.active[0].source, Source::User);
-        std::fs::write(user_dir.join("openai/extract.js"), format!("{SCRIPT}\n// changed")).unwrap();
-        let c = catalog(&bundled_dir, &user_dir, &approved);
-        assert_eq!(ids(&c.active), ["tavily"]);
-        assert_eq!(ids(&c.pending), ["extra", "openai"]);
-
-        let _ = std::fs::remove_dir_all(&bundled_dir);
+        // Allowing its exact contents makes it run; changing a file undoes that.
+        let hash = c.pending[0].hash.clone();
+        let approved = BTreeMap::from([("demo".to_string(), hash)]);
+        let c = catalog(&user_dir, &approved);
+        assert_eq!(ids(&c.active), ["demo"]);
+        assert_eq!(ids(&c.pending), ["other"]);
+        std::fs::write(user_dir.join("demo/extract.js"), format!("{SCRIPT}\n// changed")).unwrap();
+        let c = catalog(&user_dir, &approved);
+        assert!(c.active.is_empty());
+        assert_eq!(ids(&c.pending), ["demo", "other"]);
         let _ = std::fs::remove_dir_all(&user_dir);
+    }
+
+    #[test]
+    fn inspects_one_provider_or_a_folder_of_them() {
+        let (ps, errors) = inspect_all(&samples_dir());
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(ps.len(), 7);
+        let (ps, errors) = inspect_all(&samples_dir().join("tavily"));
+        assert!(errors.is_empty() && ids(&ps) == ["tavily"], "{errors:?}");
+
+        let dir = temp_dir("pick");
+        write_provider(&dir, "a", &manifest(), SCRIPT);
+        write_provider(&dir, "b", &manifest(), SCRIPT);
+        std::fs::create_dir_all(dir.join("not-a-provider")).unwrap();
+        let (ps, errors) = inspect_all(&dir);
+        assert_eq!(ids(&ps), ["demo"]);
+        assert!(errors.len() == 1 && errors[0].contains("also has the id"), "{errors:?}");
+        let (ps, errors) = inspect_all(&dir.join("not-a-provider"));
+        assert!(ps.is_empty() && errors[0].contains("no manifest.json"), "{errors:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn installs_from_a_folder_named_differently() {
         let (src_dir, user_dir) = (temp_dir("src"), temp_dir("user"));
         write_provider(&src_dir, "demo-plugin-main", &manifest(), SCRIPT);
-        let picked = inspect(&src_dir.join("demo-plugin-main")).unwrap();
+        let picked = inspect_all(&src_dir.join("demo-plugin-main")).0.remove(0);
         let installed = install(&picked, &user_dir).unwrap();
         assert_eq!(installed.dir, user_dir.join("demo"));
         assert_eq!(installed.hash, picked.hash);

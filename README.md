@@ -16,38 +16,40 @@ Needs Rust (https://rustup.rs) and Node.
 
 ## Providers
 
-Each console is a provider plugin, a folder in `providers/`:
+None are built in. Each console is a provider plugin: a folder you add from the app.
+`samples/` has providers for Anthropic, DeepSeek, OpenAI, Parallel, Tavily, TypeSafe AI
+and Voyage AI.
 
-- `manifest.json`: the name, the console `url`, the `domains` the provider may touch, and
-  one `metrics` entry for the balance: the `page` to load in the background and the
-  `captures` (name -> regex) matching the URLs of the JSON responses that hold it.
-  `required` lists the captures that must arrive first (all of them if left out).
-- `extract.js`: a function named after the metric key, e.g.
-  `function balance({ grants }, { money, number }) { return { value, detail } }`.
-  Return `null` to keep waiting.
-- `fixtures/*.json`: responses a page fetched and the `expect`ed result. `cargo test`
-  (in `src-tauri`) runs every provider against its fixtures. Use made-up values only.
+### Adding them
 
-Debug builds read `providers/` from the source tree (restart to pick up edits); the
-release app bundles a copy. A provider that fails to load is left out, and the sidebar
-says why. A provider with no metric is just a link; `"external": true` opens its console
-in the default browser. `author` (optional) is shown when asking to allow a provider.
-
-### Adding your own
-
-Click **+** at the bottom of the sidebar and choose a provider folder (any name). It is
-checked, copied to `~/Library/Application Support/dev.consolehub.desktop/providers/<id>/`,
-and you're asked to allow it. The prompt shows who says they wrote it, which page it loads
-with your logins and which domains it reads. You can also drop folders there yourself
-(restart to see them).
+Click **+** at the bottom of the sidebar and choose a provider folder (any name), or a
+folder of them such as `samples/` to add several at once. You're asked once to allow them;
+the prompt shows each one's console, the page it loads with your logins, the domains it
+reads, and who says they wrote it. Allowed providers are copied to
+`~/Library/Application Support/dev.consolehub.desktop/providers/<id>/`. You can also drop
+folders there yourself (restart to see them).
 
 - A provider runs only after you allow it, and only while its `manifest.json` and
   `extract.js` are exactly what you allowed (a SHA-256 kept in `settings.json` next to the
   folder). Change either file and it shows **review** in the sidebar until you allow it again.
-- One with the same id as a bundled provider replaces it, once allowed. If it fails to
-  load, the bundled one stays.
-- Right-click it and choose **Remove Provider…** to delete it.
+- To update one, add its folder again with **+**; it replaces your copy.
+- Right-click a provider and choose **Remove Provider…** to delete it.
 - Unlike logins, the dev build and the installed app share this folder and `settings.json`.
+
+### Writing one
+
+- `manifest.json`: `apiVersion` (1), `id` (the folder name once installed), `name`, an
+  optional `author`, the console `url`, the `domains` it may touch (pages and responses
+  must be on one of these or a subdomain), and one `metrics` entry for the balance: the
+  `page` to load in the background and the `captures` (name -> regex) matching the URLs of
+  the JSON responses that hold it. `required` lists the captures that must arrive first
+  (all of them if left out). A provider with no metric is just a link; `"external": true`
+  opens its console in the default browser.
+- `extract.js`: a function named after the metric key, e.g.
+  `function balance({ grants }, { money, number }) { return { value, detail } }`.
+  Return `null` to keep waiting.
+- `fixtures/*.json`: responses a page fetched and the `expect`ed result. `cargo test`
+  (in `src-tauri`) runs every sample against its fixtures. Use made-up values only.
 
 ## Credit balances
 
@@ -60,9 +62,11 @@ every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a p
   provider code. The provider's `extract.js` runs in a QuickJS sandbox in Rust
   (`src-tauri/src/providers.rs`): no network, no DOM, no app commands, 500 ms and 32 MB.
 - "sign in" means the page redirected to a login. Open that console and log in again.
-- "not found" means the page loaded but no balance came out. The provider probably changed
-  its API. Find the new endpoint with the dump below and update the manifest or `extract.js`.
-  The tooltip shows the provider's error, if it threw one.
+- "not found" means no balance came out, and the tooltip says why: the page never fetched
+  a response matching `captures` (the console's API moved: fix `manifest.json`), or it did
+  but `extract.js` found no balance in it (the response changed: fix `extract.js`), or
+  `extract.js` threw. Find the new endpoint or shape with the dump below.
+- A provider that breaks keeps showing its last balance, dimmed, with when it was read.
 
 To see what a billing page loads, run the binary with a dump directory:
 
