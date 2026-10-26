@@ -29,7 +29,7 @@ Check first, so you only install what's missing:
 | Check | Command |
 |---|---|
 | Node.js LTS | `node --version` |
-| Rust | `rustc --version` and `cargo --version` |
+| Rust 1.90+ | `rustc --version` and `cargo --version`; if older, `rustup update` |
 | Windows: MSVC toolchain | `rustup show` lists a `-pc-windows-msvc` default |
 | Windows: C++ Build Tools | `"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName` prints something |
 | Linux: WebKitGTK | `pkg-config --modversion webkit2gtk-4.1` |

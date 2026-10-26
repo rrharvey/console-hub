@@ -105,3 +105,7 @@ Quit the installed app first.
 - The app icon is drawn in `src-tauri/icons/app-icon.svg`. After editing it, regenerate every
   size with `npx tauri icon src-tauri/icons/app-icon.svg`, then delete the `android` and `ios`
   folders it creates.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

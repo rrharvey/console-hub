@@ -91,7 +91,8 @@ once.
 
 ## Build from source
 
-You need Git, [Node.js](https://nodejs.org) (LTS) and [Rust](https://rustup.rs), plus:
+You need Git, [Node.js](https://nodejs.org) (LTS) and [Rust](https://rustup.rs) 1.90 or
+later (`rustc --version`; if Rust is already installed, run `rustup update`), plus:
 
 **macOS**: the Xcode Command Line Tools: `xcode-select --install`
 
@@ -124,7 +125,7 @@ Other distros: see https://v2.tauri.app/start/prerequisites/.
 
 Then:
 
-    git clone <this repo>
+    git clone https://github.com/rrharvey/console-hub.git
     cd console-hub
     npm install
     npm run dev       # run it
