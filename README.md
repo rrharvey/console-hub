@@ -31,7 +31,23 @@ Each console is a provider plugin, a folder in `providers/`:
 Debug builds read `providers/` from the source tree (restart to pick up edits); the
 release app bundles a copy. A provider that fails to load is left out, and the sidebar
 says why. A provider with no metric is just a link; `"external": true` opens its console
-in the default browser.
+in the default browser. `author` (optional) is shown when asking to allow a provider.
+
+### Adding your own
+
+Click **+** at the bottom of the sidebar and choose a provider folder (any name). It is
+checked, copied to `~/Library/Application Support/dev.consolehub.desktop/providers/<id>/`,
+and you're asked to allow it. The prompt shows who says they wrote it, which page it loads
+with your logins and which domains it reads. You can also drop folders there yourself
+(restart to see them).
+
+- A provider runs only after you allow it, and only while its `manifest.json` and
+  `extract.js` are exactly what you allowed (a SHA-256 kept in `settings.json` next to the
+  folder). Change either file and it shows **review** in the sidebar until you allow it again.
+- One with the same id as a bundled provider replaces it, once allowed. If it fails to
+  load, the bundled one stays.
+- Right-click it and choose **Remove Provider…** to delete it.
+- Unlike logins, the dev build and the installed app share this folder and `settings.json`.
 
 ## Credit balances
 

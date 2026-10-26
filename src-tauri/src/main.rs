@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod providers;
+mod settings;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -12,10 +13,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use providers::{Extracted, Provider};
+use providers::{Catalog, Extracted, Provider, Source};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use tauri::{
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent, WebviewBuilder},
     AppHandle, LogicalPosition, LogicalSize, Manager, State, Url, Webview, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
@@ -30,8 +32,9 @@ const SCRAPE_TIMEOUT: Duration = Duration::from_secs(45);
 const SCRAPE_POLL: Duration = Duration::from_millis(1500);
 const SCRAPE_RELOAD_AT: [Duration; 2] = [Duration::from_secs(15), Duration::from_secs(30)];
 const POPUP_PREFIX: &str = "popup-";
-// Sidebar right-click menu item; the id carries the URL to copy.
+// Sidebar right-click menu items; the id carries the URL to copy or the provider id.
 const COPY_LINK_PREFIX: &str = "copy-link:";
+const REMOVE_PROVIDER_PREFIX: &str = "remove-provider:";
 static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
 // User agent for vendor webviews and login popups: the real Safari UA for the Safari
 // installed on this Mac.
@@ -210,19 +213,59 @@ fn show_vendor(app: AppHandle, id: String, url: String) -> Result<(), String> {
 // Providers and balance scraping
 // ---------------------------------------------------------------------------------
 
-/// Provider plugins loaded at startup (see providers.rs), and the folders that failed.
-struct Providers {
-    list: Vec<Provider>,
-    errors: Vec<String>,
-}
+/// The providers in use (see providers::catalog). Rebuilt when the user allows, adds or
+/// removes one.
+#[derive(Default)]
+struct Providers(Mutex<Catalog>);
 
 /// Debug builds read `providers/` from the source tree, so editing a provider only needs
 /// an app restart. Release builds read the copy bundled into the app's resources.
-fn providers_dir(app: &AppHandle) -> PathBuf {
+fn bundled_providers_dir(app: &AppHandle) -> PathBuf {
     if cfg!(debug_assertions) {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../providers")
     } else {
         app.path().resource_dir().unwrap_or_default().join("providers")
+    }
+}
+
+/// Providers the user added. It follows the bundle identifier, so unlike logins the dev
+/// build and the installed app share it.
+fn user_providers_dir(app: &AppHandle) -> PathBuf {
+    app.path().app_data_dir().unwrap_or_default().join("providers")
+}
+
+fn settings_path(app: &AppHandle) -> PathBuf {
+    app.path().app_config_dir().unwrap_or_default().join("settings.json")
+}
+
+/// Rebuild the provider list from disk and the user's approvals.
+fn reload_providers(app: &AppHandle) {
+    let approved = settings::load(&settings_path(app)).approved;
+    let catalog = providers::catalog(&bundled_providers_dir(app), &user_providers_dir(app), &approved);
+    for e in &catalog.errors {
+        eprintln!("provider {e}");
+    }
+    *app.state::<Providers>().0.lock().unwrap() = catalog;
+}
+
+/// Ask the sidebar to list the providers again.
+fn notify_providers_changed(app: &AppHandle) {
+    if let Some(sidebar) = app.get_webview("sidebar") {
+        let _ = sidebar.eval("window.onProvidersChanged && window.onProvidersChanged()");
+    }
+}
+
+/// Drop a provider's stored reading, so a replaced or re-added provider doesn't show the
+/// old one's balance.
+fn forget_balance(app: &AppHandle, id: &str) {
+    app.state::<Balances>().0.lock().unwrap().remove(id);
+}
+
+fn tilde(path: &Path) -> String {
+    let s = path.display().to_string();
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && s.starts_with(&home) => format!("~{}", &s[home.len()..]),
+        _ => s,
     }
 }
 
@@ -234,6 +277,10 @@ struct ProviderInfo {
     url: String,
     external: bool,
     balance: bool,
+    /// From the user's folder and not allowed yet (or changed since): click to review.
+    review: bool,
+    /// From the user's folder, so it can be removed.
+    user: bool,
 }
 
 #[derive(Serialize)]
@@ -244,20 +291,143 @@ struct ProviderList {
 
 #[tauri::command]
 fn list_providers(state: State<Providers>) -> ProviderList {
-    ProviderList {
-        providers: state
-            .list
-            .iter()
-            .map(|p| ProviderInfo {
-                id: p.manifest.id.clone(),
-                name: p.manifest.name.clone(),
-                url: p.manifest.url.clone(),
-                external: p.manifest.external,
-                balance: p.metric().is_some() && !p.manifest.external,
-            })
-            .collect(),
-        errors: state.errors.clone(),
+    let c = state.0.lock().unwrap();
+    let info = |p: &Provider, review: bool| ProviderInfo {
+        id: p.manifest.id.clone(),
+        name: p.manifest.name.clone(),
+        url: p.manifest.url.clone(),
+        external: p.manifest.external,
+        balance: !review && p.metric().is_some() && !p.manifest.external,
+        review,
+        user: p.source == Source::User,
+    };
+    let mut providers: Vec<ProviderInfo> =
+        c.active.iter().map(|p| info(p, false)).chain(c.pending.iter().map(|p| info(p, true))).collect();
+    providers.sort_by_key(|p| p.name.to_lowercase());
+    ProviderList { providers, errors: c.errors.clone() }
+}
+
+/// Ask the user to allow a provider from their folder, showing what it will do. Allowing
+/// stores the hash of exactly what was shown, so a file changed meanwhile stays waiting.
+#[tauri::command]
+async fn review_provider(app: AppHandle, id: String) -> Result<bool, String> {
+    let (p, replaces) = {
+        let c = app.state::<Providers>();
+        let c = c.0.lock().unwrap();
+        let p = c.pending.iter().find(|p| p.manifest.id == id).cloned();
+        (p.ok_or_else(|| format!("{id} is not waiting for review"))?, c.bundled_ids.contains(&id))
+    };
+    let path = settings_path(&app);
+    let mut s = settings::load(&path);
+    let changed = s.approved.contains_key(&id);
+    if !ask_to_allow(&app, &p, replaces, changed) {
+        return Ok(false);
     }
+    s.approved.insert(id.clone(), p.hash.clone());
+    settings::save(&path, &s)?;
+    forget_balance(&app, &id);
+    reload_providers(&app);
+    Ok(true)
+}
+
+fn ask_to_allow(app: &AppHandle, p: &Provider, replaces: bool, changed: bool) -> bool {
+    let m = &p.manifest;
+    let mut lines = Vec::new();
+    if changed {
+        lines.push("It changed since you allowed it.".to_string());
+    }
+    if let Some(author) = &m.author {
+        lines.push(format!("By {author} (not verified)"));
+    }
+    lines.push(format!("From {}", tilde(&p.dir)));
+    if replaces {
+        lines.push(format!("It replaces the \"{}\" provider that comes with Console Hub.", m.id));
+    }
+    lines.push(String::new());
+    lines.push(format!("Console: {}", m.url));
+    match p.metric() {
+        Some(metric) => {
+            lines.push("To read your balance it loads this page in the background, signed in as you:".into());
+            lines.push(metric.page.clone());
+            lines.push(format!("and reads responses from {}.", m.domains.join(", ")));
+        }
+        None => lines.push("It only opens its console; it reads nothing in the background.".into()),
+    }
+    lines.push(String::new());
+    lines.push("Its code runs in a sandbox with no network access. Only allow providers from people you trust.".into());
+    app.dialog()
+        .message(lines.join("\n"))
+        .title(format!("Allow the provider \u{201c}{}\u{201d}?", m.name))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Allow".into(), "Don't Allow".into()))
+        .blocking_show()
+}
+
+/// Pick a provider folder, check it, copy it into the user's folder and ask to allow it.
+/// Returns the new provider's id, or None if the user cancelled.
+#[tauri::command]
+async fn add_provider(app: AppHandle) -> Result<Option<String>, String> {
+    let Some(picked) = app.dialog().file().set_title("Choose a provider folder").blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let folder = picked.into_path().map_err(|e| e.to_string())?;
+    let p = providers::inspect(&folder).map_err(|e| format!("{}: {e}", tilde(&folder)))?;
+    let id = p.manifest.id.clone();
+    let user_dir = user_providers_dir(&app);
+    if user_dir.join(&id).exists() {
+        let replace = app
+            .dialog()
+            .message(format!("Your providers folder already has a provider with the id \"{id}\"."))
+            .title("Replace it?")
+            .buttons(MessageDialogButtons::OkCancelCustom("Replace".into(), "Cancel".into()))
+            .blocking_show();
+        if !replace {
+            return Ok(None);
+        }
+    }
+    providers::install(&p, &user_dir)?;
+    forget_balance(&app, &id);
+    reload_providers(&app);
+    // Ask right away, unless these exact contents were allowed before.
+    let waiting = app.state::<Providers>().0.lock().unwrap().pending.iter().any(|q| q.manifest.id == id);
+    if waiting {
+        review_provider(app.clone(), id.clone()).await?;
+    }
+    Ok(Some(id))
+}
+
+/// Delete a provider from the user's folder, after asking. Runs off the main thread
+/// (from the sidebar's right-click menu), since the dialog blocks.
+fn remove_provider(app: &AppHandle, id: &str) -> Result<(), String> {
+    let found = {
+        let c = app.state::<Providers>();
+        let c = c.0.lock().unwrap();
+        c.active.iter().chain(c.pending.iter()).find(|p| p.manifest.id == id && p.source == Source::User).cloned()
+    };
+    let p = found.ok_or_else(|| format!("{id} is not in your providers folder"))?;
+    let remove = app
+        .dialog()
+        .message(format!("This deletes {}.", tilde(&p.dir)))
+        .title(format!("Remove the provider \u{201c}{}\u{201d}?", p.manifest.name))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Remove".into(), "Cancel".into()))
+        .blocking_show();
+    if !remove {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(&p.dir).map_err(|e| format!("removing {}: {e}", tilde(&p.dir)))?;
+    let path = settings_path(app);
+    let mut s = settings::load(&path);
+    if s.approved.remove(id).is_some() {
+        settings::save(&path, &s)?;
+    }
+    forget_balance(app, id);
+    if let Some(webview) = app.get_webview(&format!("{VENDOR_PREFIX}{id}")) {
+        let _ = webview.close();
+    }
+    reload_providers(app);
+    notify_providers_changed(app);
+    Ok(())
 }
 
 /// One provider's latest balance reading, as shown in the sidebar.
@@ -405,13 +575,16 @@ fn get_balances(state: State<Balances>) -> Vec<Balance> {
     state.0.lock().unwrap().values().cloned().collect()
 }
 
-/// Load each provider's balance page in an off-screen webview (sharing the login cookies
-/// of the visible consoles), read the balance, then close it.
+/// Load each provider's balance page (or just `only`'s) in an off-screen webview (sharing
+/// the login cookies of the visible consoles), read the balance, then close it.
 #[tauri::command]
-fn refresh_balances(app: AppHandle, state: State<Providers>) -> Result<(), String> {
+fn refresh_balances(app: AppHandle, only: Option<String>) -> Result<(), String> {
     let window = app.get_window("main").ok_or("main window not found")?;
     let debug = std::env::var_os("CONSOLEHUB_DUMP_DIR").is_some();
-    for p in state.list.iter().filter(|p| !p.manifest.external) {
+    // Copied out so the lock isn't held while webviews are created.
+    let list: Vec<Provider> = app.state::<Providers>().0.lock().unwrap().active.clone();
+    let wanted = |p: &&Provider| !p.manifest.external && only.as_ref().is_none_or(|id| *id == p.manifest.id);
+    for p in list.iter().filter(wanted) {
         let Some(metric) = p.metric() else { continue };
         let id = p.manifest.id.clone();
         let label = format!("{SCRAPER_PREFIX}{id}");
@@ -470,21 +643,35 @@ fn open_in_browser(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Right-click menu for a sidebar vendor. Shown at the cursor; the click is handled
-/// in `on_menu_event`.
+/// Right-click menu for a sidebar provider. Shown at the cursor; the click is handled
+/// in `on_menu_event`. Providers from the user's folder can also be removed.
 #[tauri::command]
-fn vendor_menu(app: AppHandle, window: tauri::Window, url: String) -> Result<(), String> {
+fn vendor_menu(app: AppHandle, window: tauri::Window, id: String, url: String, user: bool) -> Result<(), String> {
     let copy = MenuItem::with_id(&app, format!("{COPY_LINK_PREFIX}{url}"), "Copy Link", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let menu = Menu::with_items(&app, &[&copy]).map_err(|e| e.to_string())?;
+    if user {
+        let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+        let remove = MenuItem::with_id(&app, format!("{REMOVE_PROVIDER_PREFIX}{id}"), "Remove Provider\u{2026}", true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        menu.append_items(&[&separator, &remove]).map_err(|e| e.to_string())?;
+    }
     window.popup_menu(&menu).map_err(|e| e.to_string())
 }
 
-fn on_menu_event(_app: &AppHandle, event: MenuEvent) {
-    if let Some(url) = event.id().as_ref().strip_prefix(COPY_LINK_PREFIX) {
+fn on_menu_event(app: &AppHandle, event: MenuEvent) {
+    let id = event.id().as_ref();
+    if let Some(url) = id.strip_prefix(COPY_LINK_PREFIX) {
         if let Err(e) = copy_to_clipboard(url) {
             eprintln!("copy link: {e}");
         }
+    } else if let Some(provider) = id.strip_prefix(REMOVE_PROVIDER_PREFIX) {
+        let (app, provider) = (app.clone(), provider.to_string());
+        std::thread::spawn(move || {
+            if let Err(e) = remove_provider(&app, &provider) {
+                eprintln!("remove provider: {e}");
+            }
+        });
     }
 }
 
@@ -496,22 +683,22 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Balances::default())
+        .manage(Providers::default())
         .on_menu_event(on_menu_event)
         .invoke_handler(tauri::generate_handler![
             show_vendor,
             open_in_browser,
             list_providers,
+            review_provider,
+            add_provider,
             get_balances,
             refresh_balances,
             vendor_menu,
         ])
         .setup(|app| {
-            let (list, errors) = providers::load_dir(&providers_dir(app.handle()));
-            for e in &errors {
-                eprintln!("provider {e}");
-            }
-            app.manage(Providers { list, errors });
+            reload_providers(app.handle());
 
             let window = tauri::window::WindowBuilder::new(app, "main")
                 .title("Console Hub")

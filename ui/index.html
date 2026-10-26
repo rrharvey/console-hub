@@ -43,15 +43,15 @@
   .value { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
   .value.loading { color: var(--muted); font-weight: 400; }
   .value.stale { opacity: .55; }
-  .value.login { color: var(--warn); font-weight: 400; }
+  .value.login, .value.review { color: var(--warn); font-weight: 400; }
   .value.notfound, .value.error { color: var(--bad); font-weight: 400; }
   footer {
     display: flex; align-items: center; gap: 4px;
     padding: 8px 10px 8px 18px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line);
   }
   #updated { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #refresh { padding: 2px 8px; font-size: 13px; }
-  #refresh:hover { background: var(--hover); color: var(--fg); }
+  footer button { padding: 2px 8px; font-size: 13px; }
+  footer button:hover { background: var(--hover); color: var(--fg); }
   #err { color: var(--bad); padding: 0 18px 8px; font-size: 11px; white-space: pre-line; }
 </style>
 </head>
@@ -61,6 +61,7 @@
   <div id="err"></div>
   <footer>
     <span id="updated"></span>
+    <button id="add" title="Add a provider from a folder…">+</button>
     <button id="refresh" title="Refresh balances">↻</button>
   </footer>
   <script>
@@ -70,16 +71,23 @@
     const err = document.getElementById("err");
     const updated = document.getElementById("updated");
     // Balance cells by provider id, for providers that show one.
-    const values = {};
+    let values = {};
+    let activeId = null;
     let lastRefresh = null;
 
     async function select(provider, btn) {
       err.textContent = "";
       try {
-        if (provider.external) {
+        if (provider.review) {
+          if (!(await invoke("review_provider", { id: provider.id }))) return;
+          await loadProviders();
+          invoke("refresh_balances", { only: provider.id }).catch(() => {});
+          list.querySelector(`[data-id="${provider.id}"]`)?.click();
+        } else if (provider.external) {
           await invoke("open_in_browser", { url: provider.url });
         } else {
           await invoke("show_vendor", { id: provider.id, url: provider.url });
+          activeId = provider.id;
           list.querySelectorAll("button").forEach(b => b.classList.remove("active"));
           btn.classList.add("active");
         }
@@ -88,26 +96,50 @@
       }
     }
 
-    // Providers come from their plugin folders (providers.rs), sorted by name.
     function addProvider(p) {
       const b = document.createElement("button");
+      b.dataset.id = p.id;
+      if (p.review) b.dataset.review = "";
       b.innerHTML = `<span class="name"></span>`;
       b.querySelector(".name").textContent = p.external ? `${p.name} ↗` : p.name;
-      if (p.balance) {
+      if (p.balance || p.review) {
         const value = document.createElement("span");
-        value.className = "value loading";
-        value.textContent = "…";
+        value.className = p.review ? "value review" : "value loading";
+        value.textContent = p.review ? "review" : "…";
         b.appendChild(value);
-        values[p.id] = { btn: b, value };
+        if (p.balance) values[p.id] = { btn: b, value };
       }
-      b.title = p.external ? "Opens in your default browser" : "";
+      b.title = p.review ? "Added to your providers folder but not allowed yet. Click to review."
+        : p.external ? "Opens in your default browser" : "";
+      if (p.id === activeId) b.classList.add("active");
       b.addEventListener("click", () => select(p, b));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        invoke("vendor_menu", { url: p.url }).catch((e) => { err.textContent = String(e); });
+        invoke("vendor_menu", { id: p.id, url: p.url, user: p.user }).catch((e) => { err.textContent = String(e); });
       });
       list.appendChild(b);
     }
+
+    // Providers come from their plugin folders (providers.rs), sorted by name. Rebuilt when
+    // one is allowed, added or removed; the open console stays selected.
+    async function loadProviders() {
+      try {
+        const { providers, errors } = await invoke("list_providers");
+        list.replaceChildren();
+        values = {};
+        providers.forEach(addProvider);
+        // A provider that failed to load is left out; say which and why.
+        err.textContent = errors.map(e => `Provider ${e}`).join("\n");
+        const balances = await invoke("get_balances");
+        balances.forEach(window.onBalance);
+      } catch (e) {
+        err.textContent = String(e);
+      }
+    }
+    window.onProvidersChanged = async () => {
+      await loadProviders();
+      if (!list.querySelector(".active")) list.querySelector("button:not([data-review])")?.click();
+    };
 
     // ---- credit balances ----------------------------------------------------------
     const LABELS = { loading: "…", login: "sign in", notfound: "not found", error: "error" };
@@ -142,27 +174,33 @@
       lastRefresh = Date.now() / 1000;
       showUpdated();
       try {
-        await invoke("refresh_balances");
+        await invoke("refresh_balances", { only: null });
       } catch (e) {
         updated.textContent = String(e);
       }
     }
 
     document.getElementById("refresh").addEventListener("click", refresh);
-
-    (async () => {
+    document.getElementById("add").addEventListener("click", async () => {
+      err.textContent = "";
       try {
-        const { providers, errors } = await invoke("list_providers");
-        providers.forEach(addProvider);
-        // A provider that failed to load is left out; say which and why.
-        if (errors.length) err.textContent = errors.map(e => `Provider ${e}`).join("\n");
+        const id = await invoke("add_provider");
+        if (!id) return;
+        await loadProviders();
+        const row = list.querySelector(`[data-id="${id}"]`);
+        if (row && !row.querySelector(".review")) {
+          invoke("refresh_balances", { only: id }).catch(() => {});
+          row.click();
+        }
       } catch (e) {
         err.textContent = String(e);
       }
-      // Show what Rust already has (e.g. after the sidebar reloads), then refresh.
-      try { (await invoke("get_balances")).forEach(window.onBalance); } catch {}
-      // Open the first console on launch.
-      list.querySelector("button")?.click();
+    });
+
+    (async () => {
+      await loadProviders();
+      // Open the first console on launch (skipping any waiting for review).
+      list.querySelector("button:not([data-review])")?.click();
       // Let the visible console start loading first.
       setTimeout(refresh, 1500);
       setInterval(refresh, REFRESH_MS);
