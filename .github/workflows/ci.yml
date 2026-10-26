@@ -5,7 +5,9 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", ".agent/**"]
   pull_request:
+    paths-ignore: ["**.md", ".agent/**"]
   workflow_dispatch:
 
 permissions:
