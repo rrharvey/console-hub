@@ -1,0 +1,28 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.claude.com/api/organizations/00000000-0000-4000-8000-000000000000/prepaid/auto_recharge",
+      "body": {
+        "enabled": false
+      }
+    },
+    {
+      "url": "https://platform.claude.com/api/organizations/00000000-0000-4000-8000-000000000000/prepaid/credits",
+      "body": {
+        "amount": 12346,
+        "currency": "USD",
+        "balance": {
+          "money": null,
+          "credits": {
+            "amount_minor": 1234567,
+            "exponent": 4
+          }
+        },
+        "tranches": []
+      }
+    }
+  ],
+  "expect": {
+    "value": "$123.46"
+  }
+}

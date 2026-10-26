@@ -1,0 +1,22 @@
+{
+  "apiVersion": 1,
+  "id": "openai",
+  "name": "OpenAI",
+  "url": "https://platform.openai.com/usage",
+  "domains": [
+    "openai.com"
+  ],
+  "metrics": [
+    {
+      "key": "balance",
+      "page": "https://platform.openai.com/settings/organization/billing/overview",
+      "captures": {
+        "grants": "/dashboard/billing/credit_grants",
+        "wallet": "/dashboard/billing/wallet"
+      },
+      "required": [
+        "grants"
+      ]
+    }
+  ]
+}

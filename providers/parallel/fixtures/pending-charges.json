@@ -1,0 +1,18 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.parallel.ai/api/rpc/billing/payments/get-balance-due",
+      "body": {
+        "kind": "ok",
+        "data": {
+          "balance": 123456,
+          "pendingDebitBalanceCents": 250
+        }
+      }
+    }
+  ],
+  "expect": {
+    "value": "$1,234.56",
+    "detail": "Pending charges: $2.50"
+  }
+}

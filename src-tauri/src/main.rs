@@ -1,13 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod providers;
+
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+
+use providers::{Extracted, Provider};
 
 use tauri::{
     menu::{Menu, MenuEvent, MenuItem},
@@ -20,7 +25,7 @@ const SIDEBAR_WIDTH: f64 = 248.0;
 const VENDOR_PREFIX: &str = "vendor-";
 // Hidden background webviews that load each vendor's billing page to read the balance.
 const SCRAPER_PREFIX: &str = "scrape-";
-const SCRAPE_JS: &str = include_str!("../../ui/scrape.js");
+const SCRAPE_JS: &str = include_str!("scrape.js");
 const SCRAPE_TIMEOUT: Duration = Duration::from_secs(45);
 const SCRAPE_POLL: Duration = Duration::from_millis(1500);
 const SCRAPE_RELOAD_AT: [Duration; 2] = [Duration::from_secs(15), Duration::from_secs(30)];
@@ -202,21 +207,65 @@ fn show_vendor(app: AppHandle, id: String, url: String) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------------
-// Balance scraping
+// Providers and balance scraping
 // ---------------------------------------------------------------------------------
 
-#[derive(Deserialize, Clone)]
-struct ScrapeTarget {
-    id: String,
-    url: String,
+/// Provider plugins loaded at startup (see providers.rs), and the folders that failed.
+struct Providers {
+    list: Vec<Provider>,
+    errors: Vec<String>,
 }
 
-/// One vendor's latest balance reading, as shown in the sidebar.
+/// Debug builds read `providers/` from the source tree, so editing a provider only needs
+/// an app restart. Release builds read the copy bundled into the app's resources.
+fn providers_dir(app: &AppHandle) -> PathBuf {
+    if cfg!(debug_assertions) {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../providers")
+    } else {
+        app.path().resource_dir().unwrap_or_default().join("providers")
+    }
+}
+
+/// What the sidebar needs to list a provider.
+#[derive(Serialize)]
+struct ProviderInfo {
+    id: String,
+    name: String,
+    url: String,
+    external: bool,
+    balance: bool,
+}
+
+#[derive(Serialize)]
+struct ProviderList {
+    providers: Vec<ProviderInfo>,
+    errors: Vec<String>,
+}
+
+#[tauri::command]
+fn list_providers(state: State<Providers>) -> ProviderList {
+    ProviderList {
+        providers: state
+            .list
+            .iter()
+            .map(|p| ProviderInfo {
+                id: p.manifest.id.clone(),
+                name: p.manifest.name.clone(),
+                url: p.manifest.url.clone(),
+                external: p.manifest.external,
+                balance: p.metric().is_some() && !p.manifest.external,
+            })
+            .collect(),
+        errors: state.errors.clone(),
+    }
+}
+
+/// One provider's latest balance reading, as shown in the sidebar.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 struct Balance {
     id: String,
-    /// "loading" | "ok" | "login" | "notfound" | "unsupported" | "error"
+    /// "loading" | "ok" | "login" | "notfound" | "error"
     status: String,
     value: Option<String>,
     detail: Option<String>,
@@ -265,7 +314,19 @@ fn eval_string(webview: &Webview, js: &str, timeout: Duration) -> Option<String>
     serde_json::from_str::<String>(&raw).ok()
 }
 
-fn scrape_one(app: AppHandle, webview: Webview, id: String) {
+/// What `window.__ch.result()` in scrape.js reports.
+#[derive(Deserialize)]
+struct PageState {
+    /// "login" | "loaded"
+    status: String,
+    url: Option<String>,
+    #[serde(default)]
+    responses: Vec<providers::Response>,
+}
+
+fn scrape_one(app: AppHandle, webview: Webview, provider: Provider) {
+    let id = provider.manifest.id.clone();
+    let Some(metric) = provider.metric() else { return };
     let started = Instant::now();
     let mut last = Balance { id: id.clone(), status: "notfound".into(), ..Default::default() };
     let mut reloads = 0;
@@ -281,21 +342,33 @@ fn scrape_one(app: AppHandle, webview: Webview, id: String) {
         let Some(raw) = eval_string(&webview, "window.__ch ? window.__ch.result() : ''", Duration::from_secs(5)) else {
             continue;
         };
-        let Ok(mut r) = serde_json::from_str::<Balance>(&raw) else { continue };
-        r.id = id.clone();
-        last = r;
-        match last.status.as_str() {
-            "ok" => {
-                last.updated = Some(now_secs());
+        let Ok(page) = serde_json::from_str::<PageState>(&raw) else { continue };
+        last.url = page.url;
+        if page.status == "login" {
+            last.status = "login".into();
+            last.detail = None;
+            // Give a redirect-to-login a few seconds to settle before giving up.
+            if started.elapsed() > Duration::from_secs(8) {
                 break;
             }
-            // Give a redirect-to-login a few seconds to settle before giving up.
-            "login" | "unsupported" if started.elapsed() > Duration::from_secs(8) => break,
-            _ => {}
+            continue;
         }
-    }
-    if last.status == "pending" {
-        last.status = "notfound".into();
+        // An error may clear up as more responses arrive, so keep polling; the last
+        // one is reported if the scrape times out.
+        match providers::extract(&provider, metric, &page.responses) {
+            Ok(Extracted::Ok { value, detail }) => {
+                last = Balance { id: id.clone(), status: "ok".into(), value: Some(value), detail, url: last.url, updated: Some(now_secs()) };
+                break;
+            }
+            Ok(Extracted::Pending) => {
+                last.status = "notfound".into();
+                last.detail = None;
+            }
+            Err(e) => {
+                last.status = "notfound".into();
+                last.detail = Some(format!("Provider error: {e}"));
+            }
+        }
     }
 
     if let Ok(dir) = std::env::var("CONSOLEHUB_DUMP_DIR") {
@@ -332,25 +405,27 @@ fn get_balances(state: State<Balances>) -> Vec<Balance> {
     state.0.lock().unwrap().values().cloned().collect()
 }
 
-/// Load each vendor's billing page in an off-screen webview (sharing the login cookies
+/// Load each provider's balance page in an off-screen webview (sharing the login cookies
 /// of the visible consoles), read the balance, then close it.
 #[tauri::command]
-fn refresh_balances(app: AppHandle, targets: Vec<ScrapeTarget>) -> Result<(), String> {
+fn refresh_balances(app: AppHandle, state: State<Providers>) -> Result<(), String> {
     let window = app.get_window("main").ok_or("main window not found")?;
-    for t in targets {
-        let label = format!("{SCRAPER_PREFIX}{}", t.id);
+    let debug = std::env::var_os("CONSOLEHUB_DUMP_DIR").is_some();
+    for p in state.list.iter().filter(|p| !p.manifest.external) {
+        let Some(metric) = p.metric() else { continue };
+        let id = p.manifest.id.clone();
+        let label = format!("{SCRAPER_PREFIX}{id}");
         if app.get_webview(&label).is_some() {
-            continue; // a scrape for this vendor is still running
+            continue; // a scrape for this provider is still running
         }
-        let Ok(url) = t.url.parse::<Url>() else {
-            publish(&app, Balance { id: t.id, status: "error".into(), detail: Some("bad url".into()), ..Default::default() });
-            continue;
-        };
-        let debug = std::env::var_os("CONSOLEHUB_DUMP_DIR").is_some();
-        let init = format!(
-            "window.__chVendor = {};\nwindow.__chDebug = {debug};\n{SCRAPE_JS}",
-            serde_json::to_string(&t.id).unwrap()
-        );
+        // Validated when the provider loaded.
+        let Ok(url) = metric.page.parse::<Url>() else { continue };
+        let config = serde_json::json!({
+            "captures": metric.captures.values().collect::<Vec<_>>(),
+            "domains": &p.manifest.domains,
+            "debug": debug,
+        });
+        let init = format!("window.__chConfig = {config};\n{SCRAPE_JS}");
         // Off-screen rather than hidden, so the page doesn't think it's in a background tab.
         let built = window.add_child(
             WebviewBuilder::new(&label, WebviewUrl::External(url))
@@ -362,11 +437,11 @@ fn refresh_balances(app: AppHandle, targets: Vec<ScrapeTarget>) -> Result<(), St
         );
         match built {
             Ok(webview) => {
-                publish(&app, Balance { id: t.id.clone(), status: "loading".into(), ..Default::default() });
-                let app2 = app.clone();
-                std::thread::spawn(move || scrape_one(app2, webview, t.id));
+                publish(&app, Balance { id, status: "loading".into(), ..Default::default() });
+                let (app2, provider) = (app.clone(), p.clone());
+                std::thread::spawn(move || scrape_one(app2, webview, provider));
             }
-            Err(e) => publish(&app, Balance { id: t.id, status: "error".into(), detail: Some(e.to_string()), ..Default::default() }),
+            Err(e) => publish(&app, Balance { id, status: "error".into(), detail: Some(e.to_string()), ..Default::default() }),
         }
     }
     Ok(())
@@ -426,11 +501,18 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             show_vendor,
             open_in_browser,
+            list_providers,
             get_balances,
             refresh_balances,
             vendor_menu,
         ])
         .setup(|app| {
+            let (list, errors) = providers::load_dir(&providers_dir(app.handle()));
+            for e in &errors {
+                eprintln!("provider {e}");
+            }
+            app.manage(Providers { list, errors });
+
             let window = tauri::window::WindowBuilder::new(app, "main")
                 .title("Console Hub")
                 .inner_size(1280.0, 820.0)

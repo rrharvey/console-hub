@@ -1,0 +1,18 @@
+{
+  "apiVersion": 1,
+  "id": "tavily",
+  "name": "Tavily",
+  "url": "https://app.tavily.com/home",
+  "domains": [
+    "app.tavily.com"
+  ],
+  "metrics": [
+    {
+      "key": "balance",
+      "page": "https://app.tavily.com/home",
+      "captures": {
+        "account": "/api/account(\\?|$)"
+      }
+    }
+  ]
+}

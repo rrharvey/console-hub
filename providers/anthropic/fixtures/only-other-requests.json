@@ -1,0 +1,11 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.claude.com/api/organizations/00000000-0000-4000-8000-000000000000/prepaid/credits_history",
+      "body": {
+        "amount": 5
+      }
+    }
+  ],
+  "expect": null
+}

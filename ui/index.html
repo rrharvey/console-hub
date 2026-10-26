@@ -41,7 +41,7 @@
   /* Credit balance, right-aligned next to the name. */
   /* Same size as the name, so both sit on one line; a smaller balance looked low. */
   .value { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .value.loading, .value.unsupported { color: var(--muted); font-weight: 400; }
+  .value.loading { color: var(--muted); font-weight: 400; }
   .value.stale { opacity: .55; }
   .value.login { color: var(--warn); font-weight: 400; }
   .value.notfound, .value.error { color: var(--bad); font-weight: 400; }
@@ -52,7 +52,7 @@
   #updated { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #refresh { padding: 2px 8px; font-size: 13px; }
   #refresh:hover { background: var(--hover); color: var(--fg); }
-  #err { color: var(--bad); padding: 0 18px 8px; font-size: 11px; }
+  #err { color: var(--bad); padding: 0 18px 8px; font-size: 11px; white-space: pre-line; }
 </style>
 </head>
 <body>
@@ -63,24 +63,23 @@
     <span id="updated"></span>
     <button id="refresh" title="Refresh balances">↻</button>
   </footer>
-  <script src="vendors.js"></script>
   <script>
     const { invoke } = window.__TAURI__.core;
     const REFRESH_MS = 15 * 60 * 1000;
     const list = document.getElementById("list");
     const err = document.getElementById("err");
     const updated = document.getElementById("updated");
-    // Balance cells by vendor id, for vendors that show one.
+    // Balance cells by provider id, for providers that show one.
     const values = {};
     let lastRefresh = null;
 
-    async function select(vendor, btn) {
+    async function select(provider, btn) {
       err.textContent = "";
       try {
-        if (vendor.external) {
-          await invoke("open_in_browser", { url: vendor.url });
+        if (provider.external) {
+          await invoke("open_in_browser", { url: provider.url });
         } else {
-          await invoke("show_vendor", { id: vendor.id, url: vendor.url });
+          await invoke("show_vendor", { id: provider.id, url: provider.url });
           list.querySelectorAll("button").forEach(b => b.classList.remove("active"));
           btn.classList.add("active");
         }
@@ -89,42 +88,35 @@
       }
     }
 
-    // The button tooltip: the vendor's own note, then the balance details.
-    function setTip(v, lines) {
-      const tip = [];
-      if (v.external) tip.push("Opens in your default browser");
-      if (v.balanceNote) tip.push(v.balanceNote);
-      values[v.id].btn.title = [...tip, ...lines].join("\n");
-    }
-
-    window.VENDORS.forEach(v => {
+    // Providers come from their plugin folders (providers.rs), sorted by name.
+    function addProvider(p) {
       const b = document.createElement("button");
       b.innerHTML = `<span class="name"></span>`;
-      b.querySelector(".name").textContent = v.external ? `${v.name} ↗` : v.name;
-      if (!v.external && (v.balanceUrl || v.balanceNote)) {
+      b.querySelector(".name").textContent = p.external ? `${p.name} ↗` : p.name;
+      if (p.balance) {
         const value = document.createElement("span");
-        value.className = v.balanceUrl ? "value loading" : "value unsupported";
-        value.textContent = v.balanceUrl ? "…" : "—";
+        value.className = "value loading";
+        value.textContent = "…";
         b.appendChild(value);
-        values[v.id] = { v, btn: b, value };
+        values[p.id] = { btn: b, value };
       }
-      b.title = v.external ? "Opens in your default browser" : (v.balanceNote || "");
-      b.addEventListener("click", () => select(v, b));
+      b.title = p.external ? "Opens in your default browser" : "";
+      b.addEventListener("click", () => select(p, b));
       b.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        invoke("vendor_menu", { url: v.url }).catch((e) => { err.textContent = String(e); });
+        invoke("vendor_menu", { url: p.url }).catch((e) => { err.textContent = String(e); });
       });
       list.appendChild(b);
-    });
+    }
 
     // ---- credit balances ----------------------------------------------------------
-    const LABELS = { loading: "…", login: "sign in", notfound: "not found", error: "error", unsupported: "—" };
+    const LABELS = { loading: "…", login: "sign in", notfound: "not found", error: "error" };
     const ago = s => {
       const m = Math.round((Date.now() / 1000 - s) / 60);
       return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
     };
 
-    // Called from Rust (publish in main.rs) with one vendor's reading.
+    // Called from Rust (publish in main.rs) with one provider's reading.
     window.onBalance = b => {
       const cell = values[b.id];
       if (!cell) return;
@@ -139,7 +131,7 @@
       if (b.detail) tip.push(b.detail);
       if (b.updated) tip.push(`Read ${ago(b.updated)}`);
       if (b.url) tip.push(b.url);
-      setTip(cell.v, tip);
+      cell.btn.title = tip.join("\n");
     };
 
     function showUpdated() {
@@ -149,11 +141,8 @@
     async function refresh() {
       lastRefresh = Date.now() / 1000;
       showUpdated();
-      const targets = Object.values(values)
-        .filter(c => c.v.balanceUrl)
-        .map(c => ({ id: c.v.id, url: c.v.balanceUrl }));
       try {
-        await invoke("refresh_balances", { targets });
+        await invoke("refresh_balances");
       } catch (e) {
         updated.textContent = String(e);
       }
@@ -161,12 +150,19 @@
 
     document.getElementById("refresh").addEventListener("click", refresh);
 
-    // Open the first console on launch.
-    list.querySelector("button")?.click();
-
     (async () => {
+      try {
+        const { providers, errors } = await invoke("list_providers");
+        providers.forEach(addProvider);
+        // A provider that failed to load is left out; say which and why.
+        if (errors.length) err.textContent = errors.map(e => `Provider ${e}`).join("\n");
+      } catch (e) {
+        err.textContent = String(e);
+      }
       // Show what Rust already has (e.g. after the sidebar reloads), then refresh.
       try { (await invoke("get_balances")).forEach(window.onBalance); } catch {}
+      // Open the first console on launch.
+      list.querySelector("button")?.click();
       // Let the visible console start loading first.
       setTimeout(refresh, 1500);
       setInterval(refresh, REFRESH_MS);

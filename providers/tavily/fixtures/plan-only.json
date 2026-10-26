@@ -1,0 +1,24 @@
+{
+  "responses": [
+    {
+      "url": "https://app.tavily.com/api/account",
+      "body": {
+        "name": "Test",
+        "usage": 412,
+        "limit": 1000,
+        "addon_limit": 0,
+        "current_plan": "researcher",
+        "plan_display_name": "Researcher",
+        "paygo": false,
+        "paygo_usage": 0,
+        "paygo_limit": 0,
+        "paygo_cpc": 0.008,
+        "reset_cycle": "2026-11-01"
+      }
+    }
+  ],
+  "expect": {
+    "value": "588 credits",
+    "detail": "412 / 1,000 credits used\nPlan (Researcher): 412 / 1,000\nResets 2026-11-01"
+  }
+}

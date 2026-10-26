@@ -1,0 +1,23 @@
+{
+  "responses": [
+    {
+      "url": "https://api.openai.com/v1/dashboard/billing/credit_grants",
+      "body": {
+        "total_granted": 1500,
+        "total_used": 0.004,
+        "total_available": 1499.996
+      }
+    },
+    {
+      "url": "https://api.openai.com/v1/dashboard/billing/wallet",
+      "body": {
+        "balance": 25,
+        "currency": "usd"
+      }
+    }
+  ],
+  "expect": {
+    "value": "$1,500.00",
+    "detail": "$0.00 used of $1,500.00 granted\nWallet: $25.00"
+  }
+}

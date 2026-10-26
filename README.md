@@ -14,29 +14,46 @@ Needs Rust (https://rustup.rs) and Node.
 `npm run build` makes the release app and copies it to `/Applications/Console Hub.app`
 (the `postbuild` script). Reopen the app if it was running.
 
-## Edit vendors
+## Providers
 
-`ui/vendors.js`. Verify each URL; consoles move pages around.
+Each console is a provider plugin, a folder in `providers/`:
+
+- `manifest.json`: the name, the console `url`, the `domains` the provider may touch, and
+  one `metrics` entry for the balance: the `page` to load in the background and the
+  `captures` (name -> regex) matching the URLs of the JSON responses that hold it.
+  `required` lists the captures that must arrive first (all of them if left out).
+- `extract.js`: a function named after the metric key, e.g.
+  `function balance({ grants }, { money, number }) { return { value, detail } }`.
+  Return `null` to keep waiting.
+- `fixtures/*.json`: responses a page fetched and the `expect`ed result. `cargo test`
+  (in `src-tauri`) runs every provider against its fixtures. Use made-up values only.
+
+Debug builds read `providers/` from the source tree (restart to pick up edits); the
+release app bundles a copy. A provider that fails to load is left out, and the sidebar
+says why. A provider with no metric is just a link; `"external": true` opens its console
+in the default browser.
 
 ## Credit balances
 
-The sidebar shows each vendor's credit balance next to its name. It refreshes on launch,
-every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a vendor for details.
+The sidebar shows each provider's credit balance next to its name. It refreshes on launch,
+every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a provider for details.
 
-- For each vendor with a `balanceUrl` (`ui/vendors.js`), Rust opens an off-screen webview
-  on that page. It shares the consoles' logins, reads the balance, then closes.
-- `ui/scrape.js` is injected into those background pages only. It records the JSON the page
-  fetches from the vendor's own API, and an extractor per vendor picks out the balance.
+- For each provider with a metric, Rust opens an off-screen webview on its `page`. It shares
+  the consoles' logins, records the JSON responses matching `captures`, then closes.
+- `src-tauri/src/scrape.js` is injected into those background pages only, and holds no
+  provider code. The provider's `extract.js` runs in a QuickJS sandbox in Rust
+  (`src-tauri/src/providers.rs`): no network, no DOM, no app commands, 500 ms and 32 MB.
 - "sign in" means the page redirected to a login. Open that console and log in again.
-- "not found" means the page loaded but no extractor matched. The vendor probably changed
-  its API. Find the new endpoint with the dump below and update the extractor.
-- A balance that only loads after a click can open it from `PREPARE` in `ui/scrape.js`.
+- "not found" means the page loaded but no balance came out. The provider probably changed
+  its API. Find the new endpoint with the dump below and update the manifest or `extract.js`.
+  The tooltip shows the provider's error, if it threw one.
 
 To see what a billing page loads, run the binary with a dump directory:
 
     CONSOLEHUB_DUMP_DIR=/tmp/ch-dump src-tauri/target/debug/console-hub
 
-Each vendor writes `<id>.json` (page text, requests, captured JSON) and `<id>.result.json`.
+Each provider writes `<id>.json` (page text, requests, all JSON responses, and which ones
+matched `captures`) and `<id>.result.json`.
 The dumps contain account data and session tokens. Delete them when done.
 
 ## Logins and Google sign-in

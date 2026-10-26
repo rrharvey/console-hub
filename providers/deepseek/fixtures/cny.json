@@ -1,0 +1,24 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.deepseek.com/api/v0/users/get_user_summary",
+      "body": {
+        "data": {
+          "biz_data": {
+            "normal_wallets": [
+              {
+                "currency": "CNY",
+                "balance": "1234.5"
+              }
+            ],
+            "bonus_wallets": []
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "value": "CN¥1,234.50",
+    "detail": "Topped up: CN¥1,234.50\nGranted: CN¥0.00"
+  }
+}

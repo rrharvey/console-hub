@@ -1,0 +1,14 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.claude.com/api/organizations/00000000-0000-4000-8000-000000000000/prepaid/credits?x=1",
+      "body": {
+        "amount": 250005,
+        "currency": "EUR"
+      }
+    }
+  ],
+  "expect": {
+    "value": "€2,500.05"
+  }
+}

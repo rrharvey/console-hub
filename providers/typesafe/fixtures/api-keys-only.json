@@ -1,0 +1,17 @@
+{
+  "note": "Intentional change from the pre-plugin extractor, which scanned every response: only the /keys page response counts.",
+  "responses": [
+    {
+      "url": "https://console.typesafe.ai/api/api-keys",
+      "body": [
+        {
+          "ok": true,
+          "data": {
+            "balanceCents": 999999
+          }
+        }
+      ]
+    }
+  ],
+  "expect": null
+}

@@ -1,0 +1,19 @@
+{
+  "responses": [
+    {
+      "url": "https://prod.dashboardbackend.voyageai.com/api/balance/org_test",
+      "body": {
+        "data": {
+          "balance": {
+            "balance": "25",
+            "autoRechargeEnabled": false
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "value": "$25.00",
+    "detail": "Auto recharge off"
+  }
+}

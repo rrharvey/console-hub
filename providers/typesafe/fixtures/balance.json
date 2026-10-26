@@ -1,0 +1,34 @@
+{
+  "responses": [
+    {
+      "url": "https://console.typesafe.ai/api/api-keys",
+      "body": [
+        {
+          "ok": true,
+          "data": {
+            "balanceCents": 999999
+          }
+        }
+      ]
+    },
+    {
+      "url": "https://console.typesafe.ai/keys",
+      "body": [
+        {
+          "a": "$@1",
+          "q": "",
+          "i": false
+        },
+        {
+          "ok": true,
+          "data": {
+            "balanceCents": 2750
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "value": "$27.50"
+  }
+}

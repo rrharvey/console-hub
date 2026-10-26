@@ -1,0 +1,30 @@
+{
+  "responses": [
+    {
+      "url": "https://app.tavily.com/api/keys?include_deleted=true",
+      "body": [
+        {
+          "name": "default"
+        }
+      ]
+    },
+    {
+      "url": "https://app.tavily.com/api/account",
+      "body": {
+        "usage": 15000,
+        "limit": 15000,
+        "addon_limit": 2500,
+        "current_plan": "project",
+        "plan_display_name": "Project",
+        "paygo": true,
+        "paygo_usage": 1234,
+        "paygo_limit": 100000,
+        "paygo_cpc": 0.008
+      }
+    }
+  ],
+  "expect": {
+    "value": "101,266 credits",
+    "detail": "16,234 / 117,500 credits used\nPlan (Project): 15,000 / 17,500\nPay as you go: 1,234 / 100,000 ($9.87 at $0.008/credit)"
+  }
+}

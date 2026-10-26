@@ -1,0 +1,19 @@
+{
+  "responses": [
+    {
+      "url": "https://prod.dashboardbackend.voyageai.com/api/balance/org_test",
+      "body": {
+        "data": {
+          "balance": {
+            "balance": "1234.567",
+            "autoRechargeEnabled": true
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "value": "$1,234.57",
+    "detail": "Auto recharge on"
+  }
+}

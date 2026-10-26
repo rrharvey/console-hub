@@ -1,0 +1,12 @@
+{
+  "responses": [
+    {
+      "url": "https://api.openai.com/v1/dashboard/billing/wallet",
+      "body": {
+        "balance": 25,
+        "currency": "usd"
+      }
+    }
+  ],
+  "expect": null
+}

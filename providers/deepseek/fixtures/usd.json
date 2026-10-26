@@ -1,0 +1,41 @@
+{
+  "responses": [
+    {
+      "url": "https://platform.deepseek.com/api/v0/users/get_user_summary",
+      "body": {
+        "code": 0,
+        "msg": "",
+        "data": {
+          "biz_code": 0,
+          "biz_msg": "",
+          "biz_data": {
+            "normal_wallets": [
+              {
+                "currency": "USD",
+                "balance": "12.34",
+                "token_estimation": "0"
+              }
+            ],
+            "bonus_wallets": [
+              {
+                "currency": "USD",
+                "balance": "2.00",
+                "token_estimation": "0"
+              },
+              {
+                "currency": "CNY",
+                "balance": "9.00",
+                "token_estimation": "0"
+              }
+            ],
+            "total_costs": []
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "value": "$14.34",
+    "detail": "Topped up: $12.34\nGranted: $2.00"
+  }
+}
