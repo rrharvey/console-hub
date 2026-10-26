@@ -6,7 +6,7 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "postbuild": "rm -rf '/Applications/Console Hub.app' && ditto 'src-tauri/target/release/bundle/macos/Console Hub.app' '/Applications/Console Hub.app' && echo 'Installed /Applications/Console Hub.app'",
+    "postbuild": "node scripts/postbuild.mjs",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test-provider": "cargo run --quiet --manifest-path src-tauri/Cargo.toml -- test-provider",
     "capture": "cargo run --quiet --manifest-path src-tauri/Cargo.toml -- capture",

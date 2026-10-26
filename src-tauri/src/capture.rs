@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tauri::{webview::PageLoadEvent, Context, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 use crate::providers::{self, Extracted, Provider};
-use crate::{close_popups, eval_string, open_popup, vendor_user_agent, SCRAPE_JS};
+use crate::{close_popups, eval_string, open_popup, WithVendorUserAgent, SCRAPE_JS};
 
 const POLL: Duration = Duration::from_secs(1);
 /// After a provider reads its balance, for optional captures.
@@ -71,7 +71,7 @@ pub fn run(context: Context, target: Target) {
             let window = WebviewWindowBuilder::new(app, "capture", WebviewUrl::External(target.page.clone()))
                 .title(&title)
                 .inner_size(1280.0, 860.0)
-                .user_agent(vendor_user_agent())
+                .with_vendor_user_agent()
                 .initialization_script(&init)
                 .on_new_window(move |url, features| open_popup(&popup_app, url, features))
                 .on_page_load(|window, payload| {

@@ -1,0 +1,42 @@
+# Tests on every OS the team uses. Unit tests only: they compile the whole app for that
+# OS, but nothing here opens a window (see INSTALL.md for the manual smoke test).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: npm ci
+      - name: Rust tests (sandbox, manifests, sample fixtures, author tools)
+        run: npm test
+      - name: Type-check sample providers
+        run: npm run check-js
+      - name: Run sample providers through test-provider
+        run: npm run test-provider -- samples

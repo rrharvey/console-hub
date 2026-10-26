@@ -6,17 +6,17 @@ mod providers;
 mod settings;
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use providers::{Catalog, Extracted, Provider};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_opener::OpenerExt;
 
 use tauri::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -37,9 +37,11 @@ const POPUP_PREFIX: &str = "popup-";
 // Sidebar right-click menu items; the id carries the URL to copy or the provider id.
 const COPY_LINK_PREFIX: &str = "copy-link:";
 const REMOVE_PROVIDER_PREFIX: &str = "remove-provider:";
+const SHOW_PROVIDERS_FOLDER: &str = "show-providers-folder";
 static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
-// User agent for vendor webviews and login popups: the real Safari UA for the Safari
-// installed on this Mac.
+// User agent for vendor webviews and login popups on macOS: the real Safari UA for the
+// Safari installed on this Mac. Windows (WebView2, Chromium) and Linux (WebKitGTK) keep
+// their webview's own UA, which already matches the engine.
 // - The default WKWebView UA lacks the `Version/… Safari/…` tokens, and some logins
 //   (Anthropic via WorkOS) reject it.
 // - Claiming to be Chrome made Google sign-in fail with "This browser or app may not be
@@ -47,10 +49,11 @@ static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
 // Safari's UA always reports macOS as 10_15_7; only the Version token changes.
 const SAFARI_VERSION_FALLBACK: &str = "26.0";
 
-fn vendor_user_agent() -> &'static str {
-    static UA: OnceLock<String> = OnceLock::new();
-    UA.get_or_init(|| {
-        let version = Command::new("/usr/bin/defaults")
+#[cfg(target_os = "macos")]
+fn vendor_user_agent() -> Option<&'static str> {
+    static UA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    Some(UA.get_or_init(|| {
+        let version = std::process::Command::new("/usr/bin/defaults")
             .args(["read", "/Applications/Safari.app/Contents/Info.plist", "CFBundleShortVersionString"])
             .output()
             .ok()
@@ -61,7 +64,35 @@ fn vendor_user_agent() -> &'static str {
         format!(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15"
         )
-    })
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn vendor_user_agent() -> Option<&'static str> {
+    None
+}
+
+/// Sets `vendor_user_agent()` on a webview builder, when there is one.
+trait WithVendorUserAgent: Sized {
+    fn with_vendor_user_agent(self) -> Self;
+}
+
+impl<R: tauri::Runtime> WithVendorUserAgent for WebviewBuilder<R> {
+    fn with_vendor_user_agent(self) -> Self {
+        match vendor_user_agent() {
+            Some(ua) => self.user_agent(ua),
+            None => self,
+        }
+    }
+}
+
+impl<'a, R: tauri::Runtime, M: Manager<R>> WithVendorUserAgent for WebviewWindowBuilder<'a, R, M> {
+    fn with_vendor_user_agent(self) -> Self {
+        match vendor_user_agent() {
+            Some(ua) => self.user_agent(ua),
+            None => self,
+        }
+    }
 }
 
 fn window_size(window: &tauri::Window) -> tauri::Result<LogicalSize<f64>> {
@@ -149,7 +180,7 @@ fn open_popup(app: &AppHandle, url: Url, features: NewWindowFeatures) -> NewWind
     )
     .title(title)
     .inner_size(520.0, 700.0)
-    .user_agent(vendor_user_agent())
+    .with_vendor_user_agent()
     .window_features(features)
     .on_document_title_changed(|window, title| {
         let _ = window.set_title(&title);
@@ -197,7 +228,7 @@ fn show_vendor(app: AppHandle, id: String, url: String) -> Result<(), String> {
     window
         .add_child(
             WebviewBuilder::new(&label, WebviewUrl::External(parsed))
-                .user_agent(vendor_user_agent())
+                .with_vendor_user_agent()
                 .on_new_window(move |url, features| open_popup(&popup_app, url, features))
                 .on_page_load(|webview, payload| {
                     if matches!(payload.event(), PageLoadEvent::Started) {
@@ -260,7 +291,7 @@ fn forget_provider(app: &AppHandle, id: &str) {
 
 fn tilde(path: &Path) -> String {
     let s = path.display().to_string();
-    match std::env::var("HOME") {
+    match std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
         Ok(home) if !home.is_empty() && s.starts_with(&home) => format!("~{}", &s[home.len()..]),
         _ => s,
     }
@@ -633,7 +664,7 @@ fn refresh_balances(app: AppHandle, only: Option<String>) -> Result<(), String> 
         // Off-screen rather than hidden, so the page doesn't think it's in a background tab.
         let built = window.add_child(
             WebviewBuilder::new(&label, WebviewUrl::External(url))
-                .user_agent(vendor_user_agent())
+                .with_vendor_user_agent()
                 .initialization_script(&init)
                 .on_new_window(|_, _| NewWindowResponse::Deny),
             LogicalPosition::new(-20000.0, -20000.0),
@@ -651,27 +682,16 @@ fn refresh_balances(app: AppHandle, only: Option<String>) -> Result<(), String> 
     Ok(())
 }
 
-/// Open a URL in the user's default browser. Used for vendors whose auth
-/// flow doesn't work inside an embedded webview (Anthropic/WorkOS, …).
+/// Open a provider's console in the default browser (`"external": true`). Only https
+/// URLs, passed in parsed form; the opener plugin hands them to the OS without a shell
+/// (an earlier `cmd /C start` version let `&` in a URL run commands on Windows).
 #[tauri::command]
-fn open_in_browser(url: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let program = "open";
-    #[cfg(target_os = "windows")]
-    let program = "cmd";
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let program = "xdg-open";
-
-    #[cfg(target_os = "windows")]
-    let args: Vec<&str> = vec!["/C", "start", "", &url];
-    #[cfg(not(target_os = "windows"))]
-    let args: Vec<&str> = vec![&url];
-
-    Command::new(program)
-        .args(&args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+fn open_in_browser(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|e| format!("{url}: {e}"))?;
+    if parsed.scheme() != "https" {
+        return Err(format!("{url}: only https links open in the browser"));
+    }
+    app.opener().open_url(parsed.as_str(), None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Right-click menu for a sidebar provider. Shown at the cursor; the click is handled
@@ -683,15 +703,21 @@ fn vendor_menu(app: AppHandle, window: tauri::Window, id: String, url: String) -
     let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
     let remove = MenuItem::with_id(&app, format!("{REMOVE_PROVIDER_PREFIX}{id}"), "Remove Provider\u{2026}", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&copy, &separator, &remove]).map_err(|e| e.to_string())?;
+    let folder = MenuItem::with_id(&app, SHOW_PROVIDERS_FOLDER, "Show Providers Folder", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&app, &[&copy, &separator, &remove, &folder]).map_err(|e| e.to_string())?;
     window.popup_menu(&menu).map_err(|e| e.to_string())
 }
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     let id = event.id().as_ref();
     if let Some(url) = id.strip_prefix(COPY_LINK_PREFIX) {
-        if let Err(e) = copy_to_clipboard(url) {
+        if let Err(e) = app.clipboard().write_text(url) {
             eprintln!("copy link: {e}");
+        }
+    } else if id == SHOW_PROVIDERS_FOLDER {
+        if let Err(e) = show_providers_folder(app) {
+            eprintln!("show providers folder: {e}");
         }
     } else if let Some(provider) = id.strip_prefix(REMOVE_PROVIDER_PREFIX) {
         let (app, provider) = (app.clone(), provider.to_string());
@@ -703,10 +729,11 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    let mut child = Command::new("/usr/bin/pbcopy").stdin(Stdio::piped()).spawn()?;
-    child.stdin.take().expect("piped stdin").write_all(text.as_bytes())?;
-    child.wait().map(|_| ())
+/// Open the user's providers folder in the file manager, creating it on a fresh install.
+fn show_providers_folder(app: &AppHandle) -> Result<(), String> {
+    let dir = user_providers_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -728,6 +755,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Balances::default())
         .manage(Providers::default())
         .on_menu_event(on_menu_event)

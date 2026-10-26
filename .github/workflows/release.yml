@@ -1,0 +1,76 @@
+# Builds installers for macOS (Apple Silicon and Intel), Windows and Linux.
+# - Pushing a tag vX.Y.Z (matching package.json's version) creates a DRAFT release with
+#   the installers attached; publish it by hand on GitHub.
+# - Running it by hand (Actions > Release > Run workflow) only builds, and attaches the
+#   installers to the run as artifacts. Nothing is published.
+# The builds aren't code-signed; INSTALL.md explains the OS warnings that causes.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target aarch64-apple-darwin
+          - os: macos-latest
+            args: --target x86_64-apple-darwin
+          - os: ubuntu-22.04
+            args: ""
+          - os: windows-latest
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches package.json
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match package.json ($version). See .agent/skills/release." >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: npm ci
+      - name: Build and attach to a draft release
+        if: github.event_name == 'push'
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Console Hub v__VERSION__
+          releaseBody: Download the installer for your OS below. INSTALL.md in the repo explains how to install it and get past the unsigned-app warnings.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+      - name: Build only (artifacts on this run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        with:
+          uploadWorkflowArtifacts: true
+          args: ${{ matrix.args }}
