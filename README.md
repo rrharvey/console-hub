@@ -15,10 +15,10 @@ Needs Rust (https://rustup.rs) and Node.
 
 `ui/vendors.js`. Verify each URL; consoles move pages around.
 
-## Info bar (credit balances)
+## Credit balances
 
-The bar above the consoles shows each vendor's credit balance. It refreshes on launch,
-every 15 minutes, and when you click ↻. Hover a value for details.
+The sidebar shows each vendor's credit balance next to its name. It refreshes on launch,
+every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a vendor for details.
 
 - For each vendor with a `balanceUrl` (`ui/vendors.js`), Rust opens an off-screen webview
   on that page. It shares the consoles' logins, reads the balance, then closes.
@@ -53,7 +53,7 @@ Quit the installed app first.
 
 ## Notes
 
-- Layout lives in `src-tauri/src/main.rs` (`layout`, `show_vendor`). The bar is `ui/bar.html`.
+- Layout lives in `src-tauri/src/main.rs` (`layout`, `show_vendor`). The sidebar is `ui/index.html`.
 - All vendor webviews share the default web data store. Separate stores per vendor are not set up yet.
 - The app icon is drawn in `src-tauri/icons/app-icon.svg`. After editing it, regenerate every
   size with `npx tauri icon src-tauri/icons/app-icon.svg`, then delete the `android` and `ios`

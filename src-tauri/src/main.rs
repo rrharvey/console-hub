@@ -16,9 +16,7 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
-const SIDEBAR_WIDTH: f64 = 220.0;
-const BAR_HEIGHT: f64 = 36.0;
-const BAR_LABEL: &str = "infobar";
+const SIDEBAR_WIDTH: f64 = 248.0;
 const VENDOR_PREFIX: &str = "vendor-";
 // Hidden background webviews that load each vendor's billing page to read the balance.
 const SCRAPER_PREFIX: &str = "scrape-";
@@ -71,26 +69,17 @@ fn top_inset() -> f64 {
     f64::from_bits(TOP_INSET.load(Ordering::Relaxed))
 }
 
-/// Area for vendor consoles: right of the sidebar, below the title bar and info bar.
+/// Area for vendor consoles: right of the sidebar, below the title bar.
 fn content_size(window: &tauri::Window) -> tauri::Result<LogicalSize<f64>> {
     let full = window_size(window)?;
     Ok(LogicalSize::new(
         (full.width - SIDEBAR_WIDTH).max(0.0),
-        (full.height - top_inset() - BAR_HEIGHT).max(0.0),
+        (full.height - top_inset()).max(0.0),
     ))
 }
 
 fn content_origin() -> LogicalPosition<f64> {
-    LogicalPosition::new(SIDEBAR_WIDTH, top_inset() + BAR_HEIGHT)
-}
-
-fn bar_origin() -> LogicalPosition<f64> {
     LogicalPosition::new(SIDEBAR_WIDTH, top_inset())
-}
-
-fn bar_size(window: &tauri::Window) -> tauri::Result<LogicalSize<f64>> {
-    let full = window_size(window)?;
-    Ok(LogicalSize::new((full.width - SIDEBAR_WIDTH).max(0.0), BAR_HEIGHT))
 }
 
 /// Measure the title bar inset from the sidebar, which spans the full window height:
@@ -116,9 +105,7 @@ fn layout(app: &AppHandle) {
     let Some(window) = app.get_window("main") else {
         return;
     };
-    let (Ok(full), Ok(content), Ok(bar)) =
-        (window_size(&window), content_size(&window), bar_size(&window))
-    else {
+    let (Ok(full), Ok(content)) = (window_size(&window), content_size(&window)) else {
         return;
     };
 
@@ -126,9 +113,6 @@ fn layout(app: &AppHandle) {
         if label == "sidebar" {
             let _ = webview.set_position(LogicalPosition::new(0.0, 0.0));
             let _ = webview.set_size(LogicalSize::new(SIDEBAR_WIDTH, full.height));
-        } else if label == BAR_LABEL {
-            let _ = webview.set_position(bar_origin());
-            let _ = webview.set_size(bar);
         } else if label.starts_with(VENDOR_PREFIX) {
             let _ = webview.set_position(content_origin());
             let _ = webview.set_size(content);
@@ -227,7 +211,7 @@ struct ScrapeTarget {
     url: String,
 }
 
-/// One vendor's latest balance reading, as shown in the info bar.
+/// One vendor's latest balance reading, as shown in the sidebar.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 struct Balance {
@@ -248,8 +232,8 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Store a reading and push it to the info bar. Keeps the last good value when a
-/// refresh fails, so a flaky page doesn't blank the bar.
+/// Store a reading and push it to the sidebar. Keeps the last good value when a
+/// refresh fails, so a flaky page doesn't blank the balance.
 fn publish(app: &AppHandle, mut b: Balance) {
     let state = app.state::<Balances>();
     let mut map = state.0.lock().unwrap();
@@ -263,8 +247,8 @@ fn publish(app: &AppHandle, mut b: Balance) {
     }
     map.insert(b.id.clone(), b.clone());
     drop(map);
-    if let (Some(bar), Ok(json)) = (app.get_webview(BAR_LABEL), serde_json::to_string(&b)) {
-        let _ = bar.eval(format!("window.onBalance && window.onBalance({json})"));
+    if let (Some(sidebar), Ok(json)) = (app.get_webview("sidebar"), serde_json::to_string(&b)) {
+        let _ = sidebar.eval(format!("window.onBalance && window.onBalance({json})"));
     }
 }
 
@@ -321,20 +305,20 @@ fn scrape_one(app: AppHandle, webview: Webview, id: String) {
         }
         let summary = serde_json::json!({ "elapsed_ms": started.elapsed().as_millis() as u64, "result": &last });
         let _ = std::fs::write(format!("{dir}/{id}.result.json"), summary.to_string());
-        // What the bar shows, after this reading is pushed (the last vendor to finish wins).
+        // What the sidebar shows, after this reading is pushed (the last vendor to finish wins).
         let app2 = app.clone();
         let dir2 = dir.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
-            let Some(bar) = app2.get_webview(BAR_LABEL) else { return };
-            let js = "JSON.stringify({w: innerWidth, h: innerHeight, items: [...document.querySelectorAll('.item')].map(e => e.className + ' | ' + e.innerText.replace(/\\n/g, ' '))})";
-            if let Some(state) = eval_string(&bar, js, Duration::from_secs(5)) {
+            let Some(sidebar) = app2.get_webview("sidebar") else { return };
+            let js = "JSON.stringify({w: innerWidth, h: innerHeight, items: [...document.querySelectorAll('nav button')].map(e => e.className + ' | ' + e.innerText.replace(/\\n/g, ' '))})";
+            if let Some(state) = eval_string(&sidebar, js, Duration::from_secs(5)) {
                 let state = format!("{state}\ntop_inset={}", top_inset());
                 let vendors: Vec<String> = app2.webviews().into_iter()
-                    .filter(|(l, _)| l.starts_with(VENDOR_PREFIX) || l == BAR_LABEL || l == "sidebar")
+                    .filter(|(l, _)| l.starts_with(VENDOR_PREFIX) || l == "sidebar")
                     .map(|(l, w)| format!("{l} pos={:?} size={:?}", w.position().ok(), w.size().ok()))
                     .collect();
-                let _ = std::fs::write(format!("{dir2}/bar.json"), format!("{state}\n{vendors:?}"));
+                let _ = std::fs::write(format!("{dir2}/sidebar.json"), format!("{state}\n{vendors:?}"));
             }
         });
     }
@@ -470,11 +454,6 @@ fn main() {
                 ),
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(SIDEBAR_WIDTH, full.height),
-            )?;
-            window.add_child(
-                WebviewBuilder::new(BAR_LABEL, WebviewUrl::App("bar.html".into())),
-                bar_origin(),
-                bar_size(&window)?,
             )?;
 
             let handle = app.handle().clone();

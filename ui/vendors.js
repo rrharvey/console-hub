@@ -2,9 +2,9 @@
 // The list is sorted by name below, so the sidebar and the info bar stay alphabetical.
 // `external: true` opens the vendor in the user's default browser instead of an embedded webview.
 // Login popups (window.open + postMessage) work in embedded webviews via `on_new_window` in main.rs.
-// `balanceUrl` is the page the info bar loads in the background to read the credit balance.
+// `balanceUrl` is the page the sidebar loads in the background to read the credit balance.
 // The matching extractor lives in `ui/scrape.js` (EXTRACTORS, keyed by `id`).
-// `balanceNote` instead shows a dash in the bar with this text as its tooltip.
+// `balanceNote` instead shows a dash in the sidebar with this text as its tooltip.
 window.VENDORS = [
   { id: "anthropic", name: "Anthropic",   url: "https://platform.claude.com/",
     balanceUrl: "https://platform.claude.com/settings/billing" },
