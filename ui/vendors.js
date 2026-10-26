@@ -12,6 +12,8 @@ window.VENDORS = [
     balanceUrl: "https://platform.deepseek.com/usage" },
   { id: "openai",    name: "OpenAI",      url: "https://platform.openai.com/usage",
     balanceUrl: "https://platform.openai.com/settings/organization/billing/overview" },
+  { id: "parallel",  name: "Parallel",    url: "https://platform.parallel.ai/",
+    balanceUrl: "https://platform.parallel.ai/home" },
   { id: "tavily",    name: "Tavily",      url: "https://app.tavily.com/home",
     balanceUrl: "https://app.tavily.com/home" },
   { id: "typesafe",  name: "TypeSafe AI", url: "https://console.typesafe.ai/keys",

@@ -69,6 +69,10 @@
       b.textContent = v.external ? `${v.name} ↗` : v.name;
       b.title = v.external ? "Opens in your default browser" : "";
       b.addEventListener("click", () => select(v, b));
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        invoke("vendor_menu", { url: v.url }).catch((e) => { err.textContent = String(e); });
+      });
       list.appendChild(b);
     });
 

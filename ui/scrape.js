@@ -140,6 +140,15 @@
       return { value: money(b.balance), detail: b.autoRechargeEnabled ? "Auto recharge on" : "Auto recharge off" };
     },
 
+    // The sidebar shows the balance. GET /api/rpc/billing/payments/get-balance-due
+    // -> { kind: "ok", data: { balance (cents), pendingDebitBalanceCents } }
+    parallel: ({ findCapture, money }) => {
+      const b = findCapture(/\/billing\/payments\/get-balance-due/)?.data;
+      if (!b || b.balance == null) return null;
+      const pending = Number(b.pendingDebitBalanceCents || 0);
+      return { value: money(b.balance / 100), detail: pending > 0 ? `Pending charges: ${money(pending / 100)}` : undefined };
+    },
+
     // GET app.tavily.com/api/account -> { usage, limit, addon_limit, plan_display_name, paygo* }
     // Tavily sells credits, not a dollar balance, so show credits remaining this cycle.
     // With pay as you go on, the console adds paygo_usage/paygo_limit (credits) to the plan's.

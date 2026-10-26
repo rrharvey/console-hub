@@ -1,7 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -9,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use tauri::{
+    menu::{Menu, MenuEvent, MenuItem},
     webview::{NewWindowFeatures, NewWindowResponse, PageLoadEvent, WebviewBuilder},
     AppHandle, LogicalPosition, LogicalSize, Manager, State, Url, Webview, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
@@ -25,6 +27,8 @@ const SCRAPE_TIMEOUT: Duration = Duration::from_secs(45);
 const SCRAPE_POLL: Duration = Duration::from_millis(1500);
 const SCRAPE_RELOAD_AT: [Duration; 2] = [Duration::from_secs(15), Duration::from_secs(30)];
 const POPUP_PREFIX: &str = "popup-";
+// Sidebar right-click menu item; the id carries the URL to copy.
+const COPY_LINK_PREFIX: &str = "copy-link:";
 static POPUP_COUNTER: AtomicU32 = AtomicU32::new(0);
 // User agent for vendor webviews and login popups: the real Safari UA for the Safari
 // installed on this Mac.
@@ -407,14 +411,40 @@ fn open_in_browser(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Right-click menu for a sidebar vendor. Shown at the cursor; the click is handled
+/// in `on_menu_event`.
+#[tauri::command]
+fn vendor_menu(app: AppHandle, window: tauri::Window, url: String) -> Result<(), String> {
+    let copy = MenuItem::with_id(&app, format!("{COPY_LINK_PREFIX}{url}"), "Copy Link", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&app, &[&copy]).map_err(|e| e.to_string())?;
+    window.popup_menu(&menu).map_err(|e| e.to_string())
+}
+
+fn on_menu_event(_app: &AppHandle, event: MenuEvent) {
+    if let Some(url) = event.id().as_ref().strip_prefix(COPY_LINK_PREFIX) {
+        if let Err(e) = copy_to_clipboard(url) {
+            eprintln!("copy link: {e}");
+        }
+    }
+}
+
+fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    let mut child = Command::new("/usr/bin/pbcopy").stdin(Stdio::piped()).spawn()?;
+    child.stdin.take().expect("piped stdin").write_all(text.as_bytes())?;
+    child.wait().map(|_| ())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Balances::default())
+        .on_menu_event(on_menu_event)
         .invoke_handler(tauri::generate_handler![
             show_vendor,
             open_in_browser,
             get_balances,
             refresh_balances,
+            vendor_menu,
         ])
         .setup(|app| {
             let window = tauri::window::WindowBuilder::new(app, "main")
