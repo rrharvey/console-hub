@@ -682,6 +682,16 @@ fn refresh_balances(app: AppHandle, only: Option<String>) -> Result<(), String> 
     Ok(())
 }
 
+/// Reload an open console in place. Consoles are long-lived webviews, so a page left open
+/// for hours goes stale (an expired session, an old balance) with no way to refetch it.
+#[tauri::command]
+fn reload_vendor(app: AppHandle, id: String) -> Result<(), String> {
+    let webview = app
+        .get_webview(&format!("{VENDOR_PREFIX}{id}"))
+        .ok_or("that console isn't open")?;
+    webview.eval("location.reload()").map_err(|e| e.to_string())
+}
+
 /// Open a provider's console in the default browser (`"external": true`). Only https
 /// URLs, passed in parsed form; the opener plugin hands them to the OS without a shell
 /// (an earlier `cmd /C start` version let `&` in a URL run commands on Windows).
@@ -762,6 +772,7 @@ fn main() {
         .on_menu_event(on_menu_event)
         .invoke_handler(tauri::generate_handler![
             show_vendor,
+            reload_vendor,
             open_in_browser,
             list_providers,
             review_provider,

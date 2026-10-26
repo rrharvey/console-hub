@@ -89,7 +89,8 @@ console's responses, making redacted test fixtures and testing a provider:
 ## Credit balances
 
 The sidebar shows each provider's credit balance next to its name. It refreshes on launch,
-every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a provider for details.
+every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a provider for details. **Reload page** at the top of the sidebar reloads the open
+console, for a page that has gone stale.
 
 - For each provider with a metric, Rust opens an off-screen webview on its `page`. It shares
   the consoles' logins, records the JSON responses matching `captures`, then closes.
