@@ -1,5 +1,6 @@
 // The console sidebar shows the balance.
 // get-balance-due -> { kind: "ok", data: { balance (cents), pendingDebitBalanceCents } }
+/** @param {Captures} captures @param {Helpers} helpers @returns {MetricResult | null} */
 function balance({ due }, { money }) {
   const b = due.data;
   if (!b || b.balance == null) return null;

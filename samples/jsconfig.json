@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "target": "es2022",
+    "lib": ["es2022"],
+    "moduleDetection": "force"
+  },
+  "include": ["*/extract.js", "../plugin-api/provider.d.ts"]
+}

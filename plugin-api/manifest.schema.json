@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Console Hub provider manifest (apiVersion 1)",
+  "description": "See PLUGINS.md. The app checks more than this schema can (e.g. that every URL is on one of `domains`).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "id", "name", "url", "domains"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "apiVersion": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Lowercase letters, digits and dashes. The provider's folder is named this once added."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 40, "description": "Shown in the sidebar. One line." },
+    "author": { "type": "string", "minLength": 1, "maxLength": 60, "description": "Shown, unverified, when someone is asked to allow the provider. One line." },
+    "url": { "type": "string", "pattern": "^https://\\S+$", "description": "The console opened when the provider is selected." },
+    "external": { "type": "boolean", "description": "Open the console in the default browser instead of the app." },
+    "domains": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
+      "description": "Hosts the provider may load pages from and read responses from, each including its subdomains. At least two labels (example.com), no IP addresses."
+    },
+    "metrics": {
+      "type": "array",
+      "maxItems": 1,
+      "items": { "$ref": "#/definitions/metric" },
+      "description": "The balance shown in the sidebar. Leave out for a provider that only opens its console."
+    }
+  },
+  "definitions": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "page", "captures"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "The name of the function in extract.js, e.g. \"balance\"."
+        },
+        "page": { "type": "string", "pattern": "^https://\\S+$", "description": "Loaded in the background, signed in, to read the balance." },
+        "captures": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "additionalProperties": { "type": "string", "description": "A JavaScript regular expression matched against the full URL of each JSON response." },
+          "description": "Capture name -> URL pattern. The function receives each capture's latest matching response body under its name."
+        },
+        "required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Captures that must arrive before the function runs. All of them if left out."
+        }
+      }
+    }
+  }
+}

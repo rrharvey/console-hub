@@ -24,6 +24,7 @@ use tauri::Url;
 
 pub const API_VERSION: u32 = 1;
 const SANDBOX_JS: &str = include_str!("sandbox.js");
+const FIXTURE_JS: &str = include_str!("fixture.js");
 const SANDBOX_TIMEOUT: Duration = Duration::from_millis(500);
 const SANDBOX_MEMORY: usize = 32 << 20;
 const MAX_NAME_CHARS: usize = 40;
@@ -34,6 +35,10 @@ const MAX_DETAIL_CHARS: usize = 1000;
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
+    /// For editors: points at manifest.schema.json. Ignored here.
+    #[serde(rename = "$schema", default, skip_serializing)]
+    #[allow(dead_code)]
+    pub schema: Option<String>,
     pub api_version: u32,
     pub id: String,
     pub name: String,
@@ -346,7 +351,11 @@ pub fn extract(provider: &Provider, metric: &Metric, responses: &[Response]) -> 
     let out: String = sandbox(&provider.script, |api| {
         api.get::<_, Function>("run")?.call((metric_json, responses_json))
     })?;
+    parse_result(metric, serde_json::from_str(&out).map_err(|e| e.to_string())?)
+}
 
+/// Check what sandbox.js `call` returned before anything shows it.
+fn parse_result(metric: &Metric, out: serde_json::Value) -> Result<Extracted, String> {
     #[derive(Deserialize)]
     struct Out {
         status: String,
@@ -355,7 +364,7 @@ pub fn extract(provider: &Provider, metric: &Metric, responses: &[Response]) -> 
         value: Option<serde_json::Value>,
         detail: Option<serde_json::Value>,
     }
-    let out: Out = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    let out: Out = serde_json::from_value(out).map_err(|e| e.to_string())?;
     match out.status.as_str() {
         "ok" => {}
         "missing" => return Ok(Extracted::Missing(out.missing)),
@@ -373,16 +382,135 @@ pub fn extract(provider: &Provider, metric: &Metric, responses: &[Response]) -> 
     Ok(Extracted::Ok { value, detail })
 }
 
+/// A test case in a provider's `fixtures/` folder: responses a page fetched, and the
+/// result the sidebar should show (`null`: no balance).
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Fixture {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub responses: Vec<Response>,
+    pub expect: Option<Expect>,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
+pub struct Expect {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl Expect {
+    pub fn from(e: &Extracted) -> Option<Expect> {
+        match e {
+            Extracted::Ok { value, detail } => Some(Expect { value: value.clone(), detail: detail.clone() }),
+            _ => None,
+        }
+    }
+}
+
+/// The `.json` files in a provider's `fixtures/` folder, sorted.
+pub fn fixture_files(provider_dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(provider_dir.join("fixtures"))
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect())
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// Run a fixture file. Err says what went wrong or what differed.
+pub fn check_fixture(p: &Provider, file: &Path) -> Result<(), String> {
+    let metric = p.metric().ok_or("the provider has no metric to test")?;
+    let fx: Fixture = serde_json::from_str(&std::fs::read_to_string(file).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("not a fixture: {e}"))?;
+    let got = extract(p, metric, &fx.responses)?;
+    let got_expect = Expect::from(&got);
+    if got_expect == fx.expect {
+        return Ok(());
+    }
+    let show = |e: &Option<Expect>| match e {
+        Some(e) => serde_json::to_string(e).unwrap_or_default(),
+        None => "null (no balance)".into(),
+    };
+    let why = match &got {
+        Extracted::Missing(names) => format!(" (required captures not matched: {})", names.join(", ")),
+        Extracted::Empty => " (balance() returned null)".into(),
+        Extracted::Ok { .. } => String::new(),
+    };
+    Err(format!("expected {}\n     got      {}{why}", show(&fx.expect), show(&got_expect)))
+}
+
+/// A picked response, named by the capture it matched.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct NamedResponse {
+    pub name: String,
+    pub url: String,
+    pub body: serde_json::Value,
+}
+
+pub struct Traced {
+    pub result: Extracted,
+    /// The cut-down responses give the same result. If not, `responses` are whole.
+    pub same: bool,
+    pub responses: Vec<NamedResponse>,
+}
+
+/// Pick the responses the metric captures and cut each down to the parts the provider's
+/// function reads (sandbox.js `trace`).
+pub fn trace(p: &Provider, metric: &Metric, responses: &[Response]) -> Result<Traced, String> {
+    let metric_json = serde_json::to_string(metric).map_err(|e| e.to_string())?;
+    let responses_json = serde_json::to_string(responses).map_err(|e| e.to_string())?;
+    let out: String = sandbox(&p.script, |api| api.get::<_, Function>("trace")?.call((metric_json, responses_json)))?;
+    #[derive(Deserialize)]
+    struct Out {
+        result: serde_json::Value,
+        same: bool,
+        responses: Vec<NamedResponse>,
+    }
+    let out: Out = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    Ok(Traced { result: parse_result(metric, out.result)?, same: out.same, responses: out.responses })
+}
+
+pub struct Redacted {
+    pub responses: Vec<Response>,
+    /// How many strings were replaced.
+    pub count: usize,
+    /// Redacted URLs that no longer match their capture pattern.
+    pub errors: Vec<String>,
+}
+
+/// Replace identifying strings in traced responses (fixture.js). No provider code runs.
+pub fn redact(metric: &Metric, responses: &[NamedResponse]) -> Result<Redacted, String> {
+    let metric_json = serde_json::to_string(metric).map_err(|e| e.to_string())?;
+    let responses_json = serde_json::to_string(responses).map_err(|e| e.to_string())?;
+    let out: String = sandbox_with(FIXTURE_JS, "", |api| api.get::<_, Function>("redact")?.call((metric_json, responses_json)))?;
+    #[derive(Deserialize)]
+    struct Out {
+        responses: Vec<Response>,
+        redacted: usize,
+        errors: Vec<String>,
+    }
+    let out: Out = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    Ok(Redacted { responses: out.responses, count: out.redacted, errors: out.errors })
+}
+
 /// Evaluate sandbox.js and then the provider script in a fresh QuickJS runtime, and call
 /// `f` with the entry points sandbox.js returned.
 fn sandbox<T>(script: &str, f: impl for<'js> FnOnce(Object<'js>) -> rquickjs::Result<T>) -> Result<T, String> {
+    sandbox_with(SANDBOX_JS, script, f)
+}
+
+fn sandbox_with<T>(
+    prelude: &str,
+    script: &str,
+    f: impl for<'js> FnOnce(Object<'js>) -> rquickjs::Result<T>,
+) -> Result<T, String> {
     let rt = Runtime::new().map_err(|e| e.to_string())?;
     rt.set_memory_limit(SANDBOX_MEMORY);
     let deadline = Instant::now() + SANDBOX_TIMEOUT;
     rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
     let ctx = Context::full(&rt).map_err(|e| e.to_string())?;
     ctx.with(|ctx| {
-        let api: Object = ctx.eval(SANDBOX_JS).catch(&ctx).map_err(|e| format!("sandbox.js: {e}"))?;
+        let api: Object = ctx.eval(prelude).catch(&ctx).map_err(|e| format!("sandbox prelude: {e}"))?;
         ctx.eval::<Value, _>(script).catch(&ctx).map_err(|e| format!("extract.js: {}", js_error(e)))?;
         f(api).catch(&ctx).map_err(js_error)
     })
@@ -446,29 +574,14 @@ mod tests {
     /// show. The expectations came from the extractors these plugins replaced.
     #[test]
     fn sample_fixtures() {
-        #[derive(Deserialize)]
-        struct Fixture {
-            responses: Vec<Response>,
-            expect: Option<Expect>,
-        }
-        #[derive(Deserialize)]
-        struct Expect {
-            value: String,
-            detail: Option<String>,
-        }
         let (providers, _) = load_dir(&samples_dir());
         let mut checked = 0;
         for p in &providers {
-            let dir = samples_dir().join(&p.manifest.id).join("fixtures");
-            let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
-            files.sort();
+            let files = fixture_files(&p.dir);
             assert!(!files.is_empty(), "{} has no fixtures", p.manifest.id);
             for file in files {
-                let fx: Fixture = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-                let got = extract(p, p.metric().unwrap(), &fx.responses).unwrap();
-                match fx.expect {
-                    None => assert!(!matches!(got, Extracted::Ok { .. }), "{}: {got:?}", file.display()),
-                    Some(e) => assert_eq!(got, Extracted::Ok { value: e.value, detail: e.detail }, "{}", file.display()),
+                if let Err(e) = check_fixture(p, &file) {
+                    panic!("{}: {e}", file.display());
                 }
                 checked += 1;
             }
@@ -620,6 +733,28 @@ mod tests {
 
     fn ids(ps: &[Provider]) -> Vec<&str> {
         ps.iter().map(|p| p.manifest.id.as_str()).collect()
+    }
+
+    /// Every property plugin-api/manifest.schema.json allows must load here, or editors
+    /// would accept manifests the app rejects.
+    #[test]
+    fn schema_properties_are_accepted() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!("../../plugin-api/manifest.schema.json")).unwrap();
+        let examples = serde_json::json!({
+            "$schema": "../../plugin-api/manifest.schema.json", "author": "Someone", "external": false,
+        });
+        let mut m = manifest();
+        for key in schema["properties"].as_object().unwrap().keys() {
+            if m.get(key).is_none() {
+                m[key] = examples.get(key).cloned().unwrap_or_else(|| panic!("add an example for {key}"));
+            }
+        }
+        m["metrics"][0]["required"] = serde_json::json!(["b"]);
+        let metric_props: Vec<&String> = schema["definitions"]["metric"]["properties"].as_object().unwrap().keys().collect();
+        for key in metric_props {
+            assert!(m["metrics"][0].get(key).is_some(), "metric example lacks {key}");
+        }
+        provider(m, SCRIPT).unwrap();
     }
 
     #[test]

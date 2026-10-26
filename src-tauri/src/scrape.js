@@ -5,12 +5,13 @@
 // patterns, and Rust polls `window.__ch.result()` and hands them to the provider's
 // extract.js in the QuickJS sandbox (providers.rs).
 //
-// `window.__chConfig` is set by Rust: { captures: [regex source], domains: [host], debug }.
+// `window.__chConfig` is set by Rust: { captures: [regex source], domains: [host], debug,
+// capture }. `capture` (capture.rs) also keeps every JSON response whole, on any host.
 (() => {
   if (window.__ch) return;
   const config = window.__chConfig;
   const patterns = config.captures.map((p) => new RegExp(p));
-  const ch = (window.__ch = { responses: [], debug: [], errors: [] });
+  const ch = (window.__ch = { responses: [], debug: [], all: [], errors: [] });
   const noteError = (msg) => { if (ch.errors.length < 20) ch.errors.push(String(msg).slice(0, 300)); };
   window.addEventListener("error", (e) => noteError(e.message || e));
   window.addEventListener("unhandledrejection", (e) => noteError("rejection: " + (e.reason && e.reason.stack || e.reason)));
@@ -26,12 +27,21 @@
   // With CONSOLEHUB_DUMP_DIR set, also keep every other JSON-ish response for the dump,
   // so a provider author can find the endpoint that carries the balance.
   const DEBUG = !!config.debug;
+  const CAPTURE = !!config.capture;
+  const MAX_TEXT = CAPTURE ? 5000000 : 300000;
   const SKIP_TYPES = /image|font|javascript|css|video|audio|octet-stream/i;
 
   function keep(rawUrl, text, contentType = "") {
     const url = absolute(rawUrl);
-    if (!url || !text || text.length > 300000) return;
+    if (!url || !text || text.length > MAX_TEXT) return;
     const want = wanted(url);
+    if (CAPTURE) {
+      try {
+        const body = contentType.includes("x-component") ? parseRsc(text) : JSON.parse(text);
+        ch.all.push({ url, contentType, body });
+        if (ch.all.length > 500) ch.all.shift();
+      } catch {}
+    }
     if (!want && !DEBUG) return;
     let body;
     try { body = contentType.includes("x-component") ? parseRsc(text) : JSON.parse(text); } catch {
@@ -67,7 +77,7 @@
       try {
         const ct = res.headers.get("content-type") || "";
         const json = ct.includes("json") || ct.includes("x-component");
-        if ((json && (DEBUG || wanted(absolute(res.url)))) || (DEBUG && !SKIP_TYPES.test(ct))) {
+        if ((json && (DEBUG || CAPTURE || wanted(absolute(res.url)))) || (DEBUG && !SKIP_TYPES.test(ct))) {
           res.clone().text().then((t) => keep(res.url, t, ct), () => {});
         }
       } catch {}
@@ -94,6 +104,10 @@
     JSON.stringify(looksLikeLogin()
       ? { status: "login", url: location.href }
       : { status: "loaded", url: location.href, responses: ch.responses });
+
+  // For capture.rs: cheap progress, then everything once at the end.
+  ch.progress = () => JSON.stringify({ url: location.href, login: looksLikeLogin(), count: ch.all.length });
+  ch.capture = () => JSON.stringify({ url: location.href, responses: ch.all });
 
   // Debug dump used during development (CONSOLEHUB_DUMP_DIR).
   const text = () => (document.body ? document.body.innerText : "");

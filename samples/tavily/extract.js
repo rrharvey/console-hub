@@ -1,6 +1,7 @@
 // api/account -> { usage, limit, addon_limit, plan_display_name, paygo* }
 // Tavily sells credits, not a dollar balance, so show credits remaining this cycle.
 // With pay as you go on, the console adds paygo_usage/paygo_limit (credits) to the plan's.
+/** @param {Captures} captures @param {Helpers} helpers @returns {MetricResult | null} */
 function balance({ account: a }, { money, number }) {
   if (a.limit == null) return null;
   const planLimit = Number(a.limit) + Number(a.addon_limit || 0);

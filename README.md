@@ -38,18 +38,14 @@ folders there yourself (restart to see them).
 
 ### Writing one
 
-- `manifest.json`: `apiVersion` (1), `id` (the folder name once installed), `name`, an
-  optional `author`, the console `url`, the `domains` it may touch (pages and responses
-  must be on one of these or a subdomain), and one `metrics` entry for the balance: the
-  `page` to load in the background and the `captures` (name -> regex) matching the URLs of
-  the JSON responses that hold it. `required` lists the captures that must arrive first
-  (all of them if left out). A provider with no metric is just a link; `"external": true`
-  opens its console in the default browser.
-- `extract.js`: a function named after the metric key, e.g.
-  `function balance({ grants }, { money, number }) { return { value, detail } }`.
-  Return `null` to keep waiting.
-- `fixtures/*.json`: responses a page fetched and the `expect`ed result. `cargo test`
-  (in `src-tauri`) runs every sample against its fixtures. Use made-up values only.
+See [PLUGINS.md](PLUGINS.md): the manifest and `extract.js`, and the tools for capturing a
+console's responses, making redacted test fixtures and testing a provider:
+
+    npm run capture -- <page URL | provider folder>
+    npm run fixture -- <capture> <provider folder> <fixture name>
+    npm run test-provider -- <provider folder>
+    npm test            # all Rust tests, including every sample's fixtures
+    npm run check-js    # type-check the samples' extract.js
 
 ## Credit balances
 
@@ -68,7 +64,8 @@ every 15 minutes, and when you click ↻ at the bottom of the sidebar. Hover a p
   `extract.js` threw. Find the new endpoint or shape with the dump below.
 - A provider that breaks keeps showing its last balance, dimmed, with when it was read.
 
-To see what a billing page loads, run the binary with a dump directory:
+To see what a provider's page loads, use `npm run capture` (PLUGINS.md). For debugging
+the app itself, run the binary with a dump directory:
 
     CONSOLEHUB_DUMP_DIR=/tmp/ch-dump src-tauri/target/debug/console-hub
 

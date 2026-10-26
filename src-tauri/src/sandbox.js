@@ -50,22 +50,95 @@
 
   const helpers = Object.freeze({ money, number });
 
-  // Name each capture by the latest response whose URL matches its pattern, then call the
-  // provider's function for the metric. Until there's a result, says why: required
-  // captures that haven't arrived ("missing"), or the function returned null ("empty").
-  function run(metricJson, responsesJson) {
-    const metric = JSON.parse(metricJson);
-    const responses = JSON.parse(responsesJson);
-    const captures = {};
+  // Name each capture by the latest response whose URL matches its pattern.
+  function pick(metric, responses) {
+    const picked = {};
     for (const [name, pattern] of Object.entries(metric.captures)) {
       const re = new RegExp(pattern);
-      for (const r of responses) if (re.test(r.url)) captures[name] = r.body;
+      for (const r of responses) if (re.test(r.url)) picked[name] = r;
     }
+    return picked;
+  }
+
+  // Call the provider's function for the metric. Until there's a result, says why:
+  // required captures that haven't arrived ("missing"), or it returned null ("empty").
+  function call(metric, captures) {
     const missing = metric.required.filter((name) => !(name in captures));
-    if (missing.length) return JSON.stringify({ status: "missing", missing });
+    if (missing.length) return { status: "missing", missing };
     const out = globalThis[metric.key](captures, helpers);
-    if (out == null) return JSON.stringify({ status: "empty" });
-    return JSON.stringify({ status: "ok", value: out.value, detail: out.detail ?? null });
+    if (out == null) return { status: "empty" };
+    return { status: "ok", value: out.value, detail: out.detail ?? null };
+  }
+
+  const bodies = (picked) => Object.fromEntries(Object.entries(picked).map(([name, r]) => [name, r.body]));
+
+  function run(metricJson, responsesJson) {
+    const metric = JSON.parse(metricJson);
+    return JSON.stringify(call(metric, bodies(pick(metric, JSON.parse(responsesJson)))));
+  }
+
+  // For the fixture tool (cli.rs): run the function on captures wrapped in proxies that
+  // record what it reads, and return each picked response cut down to those parts. If
+  // the cut-down responses don't give the same result, `same` is false and they're whole.
+  const WHOLE = {};
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  function trace(metricJson, responsesJson) {
+    const metric = JSON.parse(metricJson);
+    const picked = pick(metric, JSON.parse(responsesJson));
+    const reads = {};
+    const wrap = (value, name, path) => {
+      if (value === null || typeof value !== "object") return value;
+      return new Proxy(value, {
+        get(t, k, r) {
+          const v = Reflect.get(t, k, r);
+          if (typeof k !== "string" || !own(t, k)) return v;
+          reads[name].push(path.concat(k));
+          return wrap(v, name, path.concat(k));
+        },
+        has(t, k) {
+          if (typeof k === "string") reads[name].push(path.concat(k));
+          return Reflect.has(t, k);
+        },
+        // Enumerating (Object.keys, for..in, JSON.stringify) keeps the whole object.
+        ownKeys(t) {
+          reads[name].push(path.concat(WHOLE));
+          return Reflect.ownKeys(t);
+        },
+      });
+    };
+    const proxied = {};
+    for (const [name, r] of Object.entries(picked)) {
+      reads[name] = [[]];
+      proxied[name] = wrap(r.body, name, []);
+    }
+    const full = call(metric, proxied);
+
+    const container = (v) => (Array.isArray(v) ? [] : {});
+    const copyPath = (src, dst, path) => {
+      for (const k of path) {
+        if (k === WHOLE) {
+          for (const key of Object.keys(src)) dst[key] = JSON.parse(JSON.stringify(src[key]));
+          return;
+        }
+        if (src === null || typeof src !== "object" || !own(src, k)) return;
+        if (Array.isArray(src) && k === "length") { dst.length = src.length; return; }
+        const v = src[k];
+        if (v === null || typeof v !== "object") { dst[k] = v; return; }
+        if (!own(dst, k)) dst[k] = container(v);
+        src = v;
+        dst = dst[k];
+      }
+    };
+    const pruned = {};
+    for (const [name, r] of Object.entries(picked)) {
+      if (r.body === null || typeof r.body !== "object") { pruned[name] = r; continue; }
+      const body = container(r.body);
+      for (const path of reads[name]) copyPath(r.body, body, path);
+      pruned[name] = { url: r.url, body };
+    }
+    const same = JSON.stringify(call(metric, bodies(pruned))) === JSON.stringify(full);
+    const out = Object.entries(same ? pruned : picked).map(([name, r]) => ({ name, url: r.url, body: r.body }));
+    return JSON.stringify({ result: full, same, responses: out });
   }
 
   // Load-time checks that need the JS engine: patterns compile, the function exists.
@@ -79,5 +152,5 @@
     }
   }
 
-  return { run, check, money, number };
+  return { run, check, trace, money, number };
 })()

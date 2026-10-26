@@ -2,3 +2,6 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store
+
+# Captures (npm run capture) hold account data and session tokens.
+captures/

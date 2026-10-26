@@ -1,4 +1,5 @@
 // get_user_summary -> { data.biz_data: { normal_wallets[], bonus_wallets[] } }
+/** @param {Captures} captures @param {Helpers} helpers @returns {MetricResult | null} */
 function balance({ summary }, { money }) {
   const d = summary.data?.biz_data;
   if (!d || !d.normal_wallets) return null;

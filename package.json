@@ -6,9 +6,15 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "postbuild": "rm -rf '/Applications/Console Hub.app' && ditto 'src-tauri/target/release/bundle/macos/Console Hub.app' '/Applications/Console Hub.app' && echo 'Installed /Applications/Console Hub.app'"
+    "postbuild": "rm -rf '/Applications/Console Hub.app' && ditto 'src-tauri/target/release/bundle/macos/Console Hub.app' '/Applications/Console Hub.app' && echo 'Installed /Applications/Console Hub.app'",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test-provider": "cargo run --quiet --manifest-path src-tauri/Cargo.toml -- test-provider",
+    "capture": "cargo run --quiet --manifest-path src-tauri/Cargo.toml -- capture",
+    "fixture": "cargo run --quiet --manifest-path src-tauri/Cargo.toml -- fixture",
+    "check-js": "tsc -p samples/jsconfig.json"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "typescript": "^5.6.3"
   }
 }

@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod capture;
+mod cli;
 mod providers;
 mod settings;
 
@@ -708,6 +710,22 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
 }
 
 fn main() {
+    // Provider author tools: cli.rs (no window) and capture.rs.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let context = tauri::generate_context!();
+    match args.first().map(String::as_str) {
+        Some("test-provider") => std::process::exit(cli::test_provider(&args[1..])),
+        Some("fixture") => std::process::exit(cli::fixture(&args[1..])),
+        Some("capture") => match capture::parse(&args[1..]) {
+            Ok(target) => return capture::run(context, target),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        },
+        _ => {}
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Balances::default())
@@ -765,6 +783,6 @@ fn main() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Console Hub");
 }
